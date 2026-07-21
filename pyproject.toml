@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "turkmopet-warehouse-ops"
-version = "0.1.0"
+version = "0.2.0"
 description = "Warehouse stock reconciliation tools for Türkmopet"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,6 +14,9 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
 ]
+
+[project.scripts]
+warehouse-reconcile = "warehouse_ops.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["warehouse_ops*"]
