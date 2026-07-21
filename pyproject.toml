@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "turkmopet-warehouse-ops"
+version = "0.1.0"
+description = "Warehouse stock reconciliation tools for Türkmopet"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Enes Akın" }]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+]
+
+[tool.setuptools.packages.find]
+include = ["warehouse_ops*"]
