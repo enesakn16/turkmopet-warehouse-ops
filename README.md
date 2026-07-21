@@ -19,7 +19,52 @@ Motor şu verileri birleştirir:
 - Fiziksel sayım farkı
 - Açılış listesinde olmayan sayım ürünü
 
-## Hızlı kullanım
+## CSV ile kullanma
+
+Paketi kur:
+
+```bash
+python -m pip install -e .
+```
+
+`opening.csv` ve opsiyonel `counted.csv` şeması:
+
+```csv
+sku,quantity
+TVS-JUPITER-FILTRE,10
+YAMAHA-CRYPTON-SELE-ALTI,4
+```
+
+`movements.csv` şeması:
+
+```csv
+event_id,sku,movement_type,quantity
+evt-1001,TVS-JUPITER-FILTRE,RECEIPT,5
+evt-1002,TVS-JUPITER-FILTRE,SALE,3
+```
+
+Desteklenen hareket tipleri: `RECEIPT`, `SALE`, `RETURN`, `TRANSFER_OUT`, `ADJUSTMENT`.
+
+Mutabakatı çalıştır:
+
+```bash
+warehouse-reconcile \
+  --opening opening.csv \
+  --movements movements.csv \
+  --counted counted.csv \
+  --output reports/reconciliation.json \
+  --issues-output reports/issues.csv
+```
+
+Komut şu çıkış kodlarını döndürür:
+
+- `0`: stok dengeli, operasyonel sorun yok
+- `1`: rapor üretildi ancak inceleme gerektiren fark veya hata var
+- `2`: CSV dosyası okunamadı ya da şeması geçersiz
+
+JSON raporu; özet, SKU satırları, beklenen stok, fiziksel sayım farkı ve yapılandırılmış sorun kayıtlarını içerir. Sorun CSV'si Excel'de doğrudan açılabilmesi için UTF-8 BOM ile yazılır.
+
+## Python API kullanımı
 
 ```python
 from warehouse_ops import Movement, MovementType, reconcile_stock
@@ -39,14 +84,16 @@ print(report.is_balanced)  # True
 ## Veri akışı
 
 ```text
-Açılış stoku + hareketler + fiziksel sayım
-                    ↓
-          reconcile_stock(...)
-                    ↓
-     Beklenen stok + farklar + sorunlar
+CSV dışa aktarımları
+        ↓
+Doğrulama ve tip dönüşümü
+        ↓
+reconcile_stock(...)
+        ↓
+JSON mutabakat raporu + sorun CSV'si
 ```
 
-Geçersiz veya mükerrer hareketler stok toplamına dahil edilmez; yapılandırılmış `ReconciliationIssue` kayıtları olarak döndürülür.
+Geçersiz veya mükerrer hareketler stok toplamına dahil edilmez; yapılandırılmış `ReconciliationIssue` kayıtları olarak döndürülür. Mükerrer SKU satırları sessizce ezilmez, import hatası olarak raporlanır.
 
 ## Geliştirme
 
@@ -65,8 +112,11 @@ CI, her push ve pull request işleminde Python 3.11, 3.12 ve 3.13 üzerinde test
 ```text
 warehouse_ops/
   __init__.py
+  cli.py
+  io.py
   reconciliation.py
 tests/
+  test_io.py
   test_reconciliation.py
 .github/workflows/
   python-ci.yml
@@ -74,10 +124,10 @@ tests/
 
 ## Yol haritası
 
-1. CSV içe aktarma ve JSON rapor çıktısı
-2. Raf/kat bazlı lokasyon desteği
-3. Kritik stok ve sayım farkı önceliklendirmesi
-4. Shopify/İkas/Sentos dışa aktarımlarına uyarlayıcılar
+1. Raf/kat bazlı lokasyon desteği
+2. Kritik stok ve sayım farkı önceliklendirmesi
+3. Shopify/İkas/Sentos dışa aktarımlarına uyarlayıcılar
+4. İçe aktarma sırasında satır bazlı hata karantinası
 5. Basit web paneli
 
 ## Geliştirme notu
