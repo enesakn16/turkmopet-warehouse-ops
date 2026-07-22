@@ -13,6 +13,25 @@ class MovementType(StrEnum):
     ADJUSTMENT = "ADJUSTMENT"
 
 
+class IssueSeverity(StrEnum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+@dataclass(frozen=True, slots=True)
+class ProductMetadata:
+    floor: str | None = None
+    shelf: str | None = None
+    critical_stock: int | None = None
+
+    @property
+    def location(self) -> str | None:
+        parts = [part for part in (self.floor, self.shelf) if part]
+        return " / ".join(parts) or None
+
+
 @dataclass(frozen=True, slots=True)
 class Movement:
     event_id: str
@@ -32,8 +51,10 @@ class Movement:
 class ReconciliationIssue:
     code: str
     message: str
+    severity: IssueSeverity
     sku: str | None = None
     event_id: str | None = None
+    location: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +65,8 @@ class ReconciliationLine:
     expected_quantity: int
     counted_quantity: int | None
     variance: int | None
+    location: str | None
+    critical_stock: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,22 +78,43 @@ class ReconciliationReport:
     def is_balanced(self) -> bool:
         return not self.issues and all(line.variance in {None, 0} for line in self.lines)
 
+    @property
+    def prioritized_issues(self) -> tuple[ReconciliationIssue, ...]:
+        rank = {
+            IssueSeverity.CRITICAL: 0,
+            IssueSeverity.HIGH: 1,
+            IssueSeverity.MEDIUM: 2,
+            IssueSeverity.LOW: 3,
+        }
+        return tuple(sorted(self.issues, key=lambda issue: (rank[issue.severity], issue.location or "", issue.sku or "")))
+
+
+def _variance_severity(variance: int, expected_quantity: int, critical_stock: int | None) -> IssueSeverity:
+    magnitude = abs(variance)
+    if expected_quantity <= 0 or (critical_stock is not None and expected_quantity <= critical_stock):
+        return IssueSeverity.CRITICAL
+    if magnitude >= 10:
+        return IssueSeverity.HIGH
+    if magnitude >= 3:
+        return IssueSeverity.MEDIUM
+    return IssueSeverity.LOW
+
 
 def reconcile_stock(
     opening_stock: Mapping[str, int],
     movements: Iterable[Movement],
     counted_stock: Mapping[str, int] | None = None,
+    product_metadata: Mapping[str, ProductMetadata] | None = None,
 ) -> ReconciliationReport:
-    """Reconcile expected stock against physical counts.
-
-    Invalid movements are excluded from totals and returned as structured issues.
-    Duplicate event IDs are ignored after the first occurrence to prevent double
-    counting imported marketplace or warehouse events.
-    """
+    """Reconcile expected stock against physical counts and prioritize exceptions."""
 
     issues: list[ReconciliationIssue] = []
     deltas: dict[str, int] = {sku: 0 for sku in opening_stock}
     seen_event_ids: set[str] = set()
+    metadata = product_metadata or {}
+
+    def issue_location(sku: str | None) -> str | None:
+        return metadata.get(sku, ProductMetadata()).location if sku else None
 
     for sku, quantity in opening_stock.items():
         if quantity < 0:
@@ -78,7 +122,9 @@ def reconcile_stock(
                 ReconciliationIssue(
                     code="NEGATIVE_OPENING_STOCK",
                     message=f"Opening quantity cannot be negative: {quantity}",
+                    severity=IssueSeverity.CRITICAL,
                     sku=sku,
+                    location=issue_location(sku),
                 )
             )
 
@@ -88,7 +134,9 @@ def reconcile_stock(
                 ReconciliationIssue(
                     code="MISSING_EVENT_ID",
                     message="Movement event ID is required.",
+                    severity=IssueSeverity.HIGH,
                     sku=movement.sku,
+                    location=issue_location(movement.sku),
                 )
             )
             continue
@@ -98,8 +146,10 @@ def reconcile_stock(
                 ReconciliationIssue(
                     code="DUPLICATE_EVENT",
                     message="Duplicate movement ignored.",
+                    severity=IssueSeverity.HIGH,
                     sku=movement.sku,
                     event_id=movement.event_id,
+                    location=issue_location(movement.sku),
                 )
             )
             continue
@@ -110,8 +160,10 @@ def reconcile_stock(
                 ReconciliationIssue(
                     code="UNKNOWN_SKU",
                     message="Movement references an SKU missing from opening stock.",
+                    severity=IssueSeverity.HIGH,
                     sku=movement.sku,
                     event_id=movement.event_id,
+                    location=issue_location(movement.sku),
                 )
             )
             continue
@@ -121,8 +173,10 @@ def reconcile_stock(
                 ReconciliationIssue(
                     code="INVALID_QUANTITY",
                     message="Movement quantity must be greater than zero.",
+                    severity=IssueSeverity.MEDIUM,
                     sku=movement.sku,
                     event_id=movement.event_id,
+                    location=issue_location(movement.sku),
                 )
             )
             continue
@@ -139,11 +193,14 @@ def reconcile_stock(
                 ReconciliationIssue(
                     code="COUNTED_UNKNOWN_SKU",
                     message="Physical count contains an SKU missing from opening stock.",
+                    severity=IssueSeverity.HIGH,
                     sku=sku,
+                    location=issue_location(sku),
                 )
             )
             continue
 
+        product = metadata.get(sku, ProductMetadata())
         opening_quantity = opening_stock[sku]
         movement_delta = deltas.get(sku, 0)
         expected_quantity = opening_quantity + movement_delta
@@ -155,7 +212,9 @@ def reconcile_stock(
                 ReconciliationIssue(
                     code="NEGATIVE_EXPECTED_STOCK",
                     message=f"Expected stock fell below zero: {expected_quantity}",
+                    severity=IssueSeverity.CRITICAL,
                     sku=sku,
+                    location=product.location,
                 )
             )
 
@@ -164,7 +223,23 @@ def reconcile_stock(
                 ReconciliationIssue(
                     code="STOCK_VARIANCE",
                     message=f"Physical count differs from expected stock by {variance}.",
+                    severity=_variance_severity(variance, expected_quantity, product.critical_stock),
                     sku=sku,
+                    location=product.location,
+                )
+            )
+
+        if product.critical_stock is not None and expected_quantity <= product.critical_stock:
+            issues.append(
+                ReconciliationIssue(
+                    code="CRITICAL_STOCK",
+                    message=(
+                        f"Expected stock {expected_quantity} is at or below critical threshold "
+                        f"{product.critical_stock}."
+                    ),
+                    severity=IssueSeverity.CRITICAL,
+                    sku=sku,
+                    location=product.location,
                 )
             )
 
@@ -176,6 +251,8 @@ def reconcile_stock(
                 expected_quantity=expected_quantity,
                 counted_quantity=counted_quantity,
                 variance=variance,
+                location=product.location,
+                critical_stock=product.critical_stock,
             )
         )
 
