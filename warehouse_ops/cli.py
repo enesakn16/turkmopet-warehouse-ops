@@ -3,7 +3,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .io import CsvFormatError, read_movements_csv, read_stock_csv, write_issues_csv, write_report_json
+from .io import (
+    CsvFormatError,
+    read_movements_csv,
+    read_product_metadata_csv,
+    read_stock_csv,
+    write_issues_csv,
+    write_report_json,
+)
 from .reconciliation import reconcile_stock
 
 
@@ -23,13 +30,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional physical count CSV with sku,quantity columns",
     )
     parser.add_argument(
+        "--metadata",
+        help="Optional CSV with sku,floor,shelf,critical_stock columns",
+    )
+    parser.add_argument(
         "--output",
         default="reconciliation-report.json",
         help="JSON report path (default: reconciliation-report.json)",
     )
     parser.add_argument(
         "--issues-output",
-        help="Optional CSV path for issues requiring operational review",
+        help="Optional CSV path for prioritized issues requiring operational review",
     )
     return parser
 
@@ -41,15 +52,23 @@ def main(argv: list[str] | None = None) -> int:
         opening_stock = read_stock_csv(args.opening)
         movements = read_movements_csv(args.movements)
         counted_stock = read_stock_csv(args.counted) if args.counted else None
+        product_metadata = (
+            read_product_metadata_csv(args.metadata) if args.metadata else None
+        )
     except CsvFormatError as exc:
         print(f"Import failed: {exc}")
         return 2
 
-    report = reconcile_stock(opening_stock, movements, counted_stock)
+    report = reconcile_stock(
+        opening_stock,
+        movements,
+        counted_stock,
+        product_metadata,
+    )
     output_path = write_report_json(report, args.output)
 
     if args.issues_output:
-        write_issues_csv(report.issues, args.issues_output)
+        write_issues_csv(report.prioritized_issues, args.issues_output)
 
     status = "BALANCED" if report.is_balanced else "REVIEW_REQUIRED"
     print(
