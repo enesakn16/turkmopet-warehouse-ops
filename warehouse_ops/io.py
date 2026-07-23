@@ -6,7 +6,12 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable
 
-from .reconciliation import Movement, MovementType, ReconciliationReport
+from .reconciliation import (
+    Movement,
+    MovementType,
+    ProductMetadata,
+    ReconciliationReport,
+)
 
 
 class CsvFormatError(ValueError):
@@ -60,6 +65,40 @@ def read_stock_csv(path: str | Path) -> dict[str, int]:
     return stock
 
 
+def read_product_metadata_csv(path: str | Path) -> dict[str, ProductMetadata]:
+    """Read warehouse location and critical-stock thresholds from CSV.
+
+    Required columns are ``sku,floor,shelf,critical_stock``. Floor and shelf may be
+    blank, while ``critical_stock`` may be blank when no threshold is configured.
+    Duplicate SKUs and negative thresholds are rejected.
+    """
+
+    rows = _read_rows(path, {"sku", "floor", "shelf", "critical_stock"})
+    metadata: dict[str, ProductMetadata] = {}
+    for row_number, row in enumerate(rows, start=2):
+        sku = row["sku"]
+        if not sku:
+            raise CsvFormatError(f"{path}: row {row_number} has an empty SKU")
+        if sku in metadata:
+            raise CsvFormatError(f"{path}: row {row_number} duplicates SKU {sku!r}")
+
+        raw_threshold = row["critical_stock"]
+        threshold = None
+        if raw_threshold:
+            threshold = _parse_quantity(raw_threshold, path=path, row_number=row_number)
+            if threshold < 0:
+                raise CsvFormatError(
+                    f"{path}: row {row_number} has negative critical_stock: {threshold}"
+                )
+
+        metadata[sku] = ProductMetadata(
+            floor=row["floor"] or None,
+            shelf=row["shelf"] or None,
+            critical_stock=threshold,
+        )
+    return metadata
+
+
 def read_movements_csv(path: str | Path) -> tuple[Movement, ...]:
     """Read movement rows from CSV.
 
@@ -102,7 +141,7 @@ def report_to_dict(report: ReconciliationReport) -> dict[str, object]:
             "issue_count": len(report.issues),
         },
         "lines": [asdict(line) for line in report.lines],
-        "issues": [asdict(issue) for issue in report.issues],
+        "issues": [asdict(issue) for issue in report.prioritized_issues],
     }
 
 
@@ -127,22 +166,26 @@ def write_issues_csv(
     issues: Iterable[object],
     path: str | Path,
 ) -> Path:
-    """Write issue objects with code/message/sku/event_id fields to CSV."""
+    """Write prioritized operational issues to an Excel-friendly UTF-8 CSV."""
 
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(
-            handle, fieldnames=["code", "message", "sku", "event_id"]
+            handle,
+            fieldnames=["severity", "code", "message", "sku", "event_id", "location"],
         )
         writer.writeheader()
         for issue in issues:
+            severity = getattr(issue, "severity", "")
             writer.writerow(
                 {
+                    "severity": getattr(severity, "value", severity),
                     "code": getattr(issue, "code"),
                     "message": getattr(issue, "message"),
                     "sku": getattr(issue, "sku", None) or "",
                     "event_id": getattr(issue, "event_id", None) or "",
+                    "location": getattr(issue, "location", None) or "",
                 }
             )
     return output_path
