@@ -9,6 +9,7 @@ Motor şu verileri birleştirir:
 - Açılış stokları
 - Mal kabul, satış, iade, transfer çıkışı ve düzeltme hareketleri
 - Opsiyonel fiziksel sayım sonuçları
+- Opsiyonel kat, raf ve kritik stok bilgileri
 
 Ürettiği kontroller:
 
@@ -18,6 +19,9 @@ Motor şu verileri birleştirir:
 - Negatif beklenen stok
 - Fiziksel sayım farkı
 - Açılış listesinde olmayan sayım ürünü
+- Kritik stok eşiğine düşen ürün
+
+Sorunlar `CRITICAL`, `HIGH`, `MEDIUM` ve `LOW` önem seviyeleriyle sıralanır. Aynı önem seviyesindeki kayıtlar depo konumu ve SKU'ya göre düzenlenir.
 
 ## CSV ile kullanma
 
@@ -45,6 +49,16 @@ evt-1002,TVS-JUPITER-FILTRE,SALE,3
 
 Desteklenen hareket tipleri: `RECEIPT`, `SALE`, `RETURN`, `TRANSFER_OUT`, `ADJUSTMENT`.
 
+Opsiyonel `metadata.csv` şeması:
+
+```csv
+sku,floor,shelf,critical_stock
+TVS-JUPITER-FILTRE,Zemin,A-12,5
+YAMAHA-CRYPTON-SELE-ALTI,Asma Kat,B-07,2
+```
+
+`floor` ve `shelf` boş bırakılabilir. `critical_stock` boş bırakılırsa o SKU için eşik kontrolü yapılmaz. Negatif eşikler ve mükerrer SKU satırları import hatası olarak reddedilir.
+
 Mutabakatı çalıştır:
 
 ```bash
@@ -52,6 +66,7 @@ warehouse-reconcile \
   --opening opening.csv \
   --movements movements.csv \
   --counted counted.csv \
+  --metadata metadata.csv \
   --output reports/reconciliation.json \
   --issues-output reports/issues.csv
 ```
@@ -62,12 +77,21 @@ Komut şu çıkış kodlarını döndürür:
 - `1`: rapor üretildi ancak inceleme gerektiren fark veya hata var
 - `2`: CSV dosyası okunamadı ya da şeması geçersiz
 
-JSON raporu; özet, SKU satırları, beklenen stok, fiziksel sayım farkı ve yapılandırılmış sorun kayıtlarını içerir. Sorun CSV'si Excel'de doğrudan açılabilmesi için UTF-8 BOM ile yazılır.
+JSON raporu; özet, SKU satırları, beklenen stok, fiziksel sayım farkı, lokasyon ve kritik stok bilgilerini içerir. Sorun CSV'si Excel'de doğrudan açılabilmesi için UTF-8 BOM ile yazılır ve şu kolonları üretir:
+
+```text
+severity,code,message,sku,event_id,location
+```
 
 ## Python API kullanımı
 
 ```python
-from warehouse_ops import Movement, MovementType, reconcile_stock
+from warehouse_ops import (
+    Movement,
+    MovementType,
+    ProductMetadata,
+    reconcile_stock,
+)
 
 report = reconcile_stock(
     opening_stock={"TVS-JUPITER-FILTRE": 10},
@@ -76,6 +100,13 @@ report = reconcile_stock(
         Movement("evt-1002", "TVS-JUPITER-FILTRE", MovementType.SALE, 3),
     ],
     counted_stock={"TVS-JUPITER-FILTRE": 12},
+    product_metadata={
+        "TVS-JUPITER-FILTRE": ProductMetadata(
+            floor="Zemin",
+            shelf="A-12",
+            critical_stock=5,
+        )
+    },
 )
 
 print(report.is_balanced)  # True
@@ -84,13 +115,13 @@ print(report.is_balanced)  # True
 ## Veri akışı
 
 ```text
-CSV dışa aktarımları
+CSV dışa aktarımları + depo metadata dosyası
         ↓
 Doğrulama ve tip dönüşümü
         ↓
 reconcile_stock(...)
         ↓
-JSON mutabakat raporu + sorun CSV'si
+Önem seviyesine göre sıralı JSON raporu + sorun CSV'si
 ```
 
 Geçersiz veya mükerrer hareketler stok toplamına dahil edilmez; yapılandırılmış `ReconciliationIssue` kayıtları olarak döndürülür. Mükerrer SKU satırları sessizce ezilmez, import hatası olarak raporlanır.
@@ -124,10 +155,10 @@ tests/
 
 ## Yol haritası
 
-1. Raf/kat bazlı lokasyon desteği
-2. Kritik stok ve sayım farkı önceliklendirmesi
-3. Shopify/İkas/Sentos dışa aktarımlarına uyarlayıcılar
-4. İçe aktarma sırasında satır bazlı hata karantinası
+1. Sayım sorunlarını çalışan veya ekip bazında atama
+2. Shopify/İkas/Sentos dışa aktarımlarına uyarlayıcılar
+3. İçe aktarma sırasında satır bazlı hata karantinası
+4. Çözülmüş/açık sorun geçmişi
 5. Basit web paneli
 
 ## Geliştirme notu
