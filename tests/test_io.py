@@ -1,3 +1,4 @@
+import csv
 import json
 import tempfile
 import unittest
@@ -7,6 +8,7 @@ from warehouse_ops import MovementType, reconcile_stock
 from warehouse_ops.io import (
     CsvFormatError,
     read_movements_csv,
+    read_product_metadata_csv,
     read_stock_csv,
     write_issues_csv,
     write_report_json,
@@ -38,6 +40,28 @@ class CsvIoTests(unittest.TestCase):
         with self.assertRaisesRegex(CsvFormatError, "duplicates SKU"):
             read_stock_csv(path)
 
+    def test_reads_product_metadata(self) -> None:
+        path = self.write(
+            "metadata.csv",
+            "sku,floor,shelf,critical_stock\nSKU-1,Zemin,A-12,3\nSKU-2,Asma,,\n",
+        )
+
+        metadata = read_product_metadata_csv(path)
+
+        self.assertEqual(metadata["SKU-1"].location, "Zemin / A-12")
+        self.assertEqual(metadata["SKU-1"].critical_stock, 3)
+        self.assertEqual(metadata["SKU-2"].location, "Asma")
+        self.assertIsNone(metadata["SKU-2"].critical_stock)
+
+    def test_negative_critical_stock_is_rejected(self) -> None:
+        path = self.write(
+            "metadata.csv",
+            "sku,floor,shelf,critical_stock\nSKU-1,Zemin,A-12,-1\n",
+        )
+
+        with self.assertRaisesRegex(CsvFormatError, "negative critical_stock"):
+            read_product_metadata_csv(path)
+
     def test_reads_movement_types_case_insensitively(self) -> None:
         path = self.write(
             "movements.csv",
@@ -65,19 +89,36 @@ class CsvIoTests(unittest.TestCase):
             "event_id,sku,movement_type,quantity\nevt-1,SKU-1,SALE,2\n",
         )
         counted = self.write("counted.csv", "sku,quantity\nSKU-1,7\n")
+        metadata_path = self.write(
+            "metadata.csv",
+            "sku,floor,shelf,critical_stock\nSKU-1,Zemin,A-12,8\n",
+        )
 
         report = reconcile_stock(
             read_stock_csv(opening),
             read_movements_csv(movements),
             read_stock_csv(counted),
+            read_product_metadata_csv(metadata_path),
         )
         json_path = write_report_json(report, self.root / "out" / "report.json")
-        issues_path = write_issues_csv(report.issues, self.root / "out" / "issues.csv")
+        issues_path = write_issues_csv(
+            report.prioritized_issues,
+            self.root / "out" / "issues.csv",
+        )
 
         payload = json.loads(json_path.read_text(encoding="utf-8"))
         self.assertFalse(payload["is_balanced"])
-        self.assertEqual(payload["summary"]["issue_count"], 1)
-        self.assertIn("STOCK_VARIANCE", issues_path.read_text(encoding="utf-8-sig"))
+        self.assertEqual(payload["summary"]["issue_count"], 2)
+        self.assertEqual(payload["issues"][0]["severity"], "CRITICAL")
+
+        with issues_path.open("r", encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual(rows[0]["severity"], "CRITICAL")
+        self.assertEqual(rows[0]["location"], "Zemin / A-12")
+        self.assertEqual(
+            {row["code"] for row in rows},
+            {"CRITICAL_STOCK", "STOCK_VARIANCE"},
+        )
 
 
 if __name__ == "__main__":
