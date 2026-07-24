@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "turkmopet-warehouse-ops"
-version = "0.2.0"
-description = "Warehouse stock reconciliation tools for Türkmopet"
+version = "0.3.0"
+description = "Warehouse stock reconciliation and issue workflow tools for Türkmopet"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
