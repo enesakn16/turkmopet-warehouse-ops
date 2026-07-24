@@ -1,65 +1,47 @@
 # Türkmopet Warehouse Ops
 
-Türkmopet'in depo hareketlerini doğrulamak, mükerrer kayıtları yakalamak ve fiziksel sayım farklarını raporlamak için geliştirilen Python araçları.
+Türkmopet depo hareketlerini doğrulayan, fiziksel sayım farklarını önceliklendiren ve bulunan sorunları atanabilir görevlere dönüştüren Python araçları.
 
-## İlk modül: stok mutabakat motoru
+## Özellikler
 
-Motor şu verileri birleştirir:
+- Açılış stokları, hareketler, fiziksel sayım ve ürün konumu CSV dosyalarını okur.
+- Mükerrer hareket, bilinmeyen SKU, geçersiz miktar, negatif stok, sayım farkı ve kritik stok sorunlarını yakalar.
+- Sorunları `CRITICAL`, `HIGH`, `MEDIUM` ve `LOW` olarak sıralar.
+- JSON raporu ve Excel uyumlu sorun CSV'si üretir.
+- Aynı sorunu tekrar görevleştirmeden çalışan/ekip ataması ve çözüm geçmişi oluşturur.
 
-- Açılış stokları
-- Mal kabul, satış, iade, transfer çıkışı ve düzeltme hareketleri
-- Opsiyonel fiziksel sayım sonuçları
-- Opsiyonel kat, raf ve kritik stok bilgileri
-
-Ürettiği kontroller:
-
-- Mükerrer hareket numarası
-- Bilinmeyen SKU
-- Geçersiz miktar
-- Negatif beklenen stok
-- Fiziksel sayım farkı
-- Açılış listesinde olmayan sayım ürünü
-- Kritik stok eşiğine düşen ürün
-
-Sorunlar `CRITICAL`, `HIGH`, `MEDIUM` ve `LOW` önem seviyeleriyle sıralanır. Aynı önem seviyesindeki kayıtlar depo konumu ve SKU'ya göre düzenlenir.
-
-## CSV ile kullanma
-
-Paketi kur:
+## Kurulum
 
 ```bash
 python -m pip install -e .
 ```
 
-`opening.csv` ve opsiyonel `counted.csv` şeması:
+## CSV şemaları
+
+`opening.csv` ve opsiyonel `counted.csv`:
 
 ```csv
 sku,quantity
 TVS-JUPITER-FILTRE,10
-YAMAHA-CRYPTON-SELE-ALTI,4
 ```
 
-`movements.csv` şeması:
+`movements.csv`:
 
 ```csv
 event_id,sku,movement_type,quantity
 evt-1001,TVS-JUPITER-FILTRE,RECEIPT,5
-evt-1002,TVS-JUPITER-FILTRE,SALE,3
 ```
 
 Desteklenen hareket tipleri: `RECEIPT`, `SALE`, `RETURN`, `TRANSFER_OUT`, `ADJUSTMENT`.
 
-Opsiyonel `metadata.csv` şeması:
+Opsiyonel `metadata.csv`:
 
 ```csv
 sku,floor,shelf,critical_stock
 TVS-JUPITER-FILTRE,Zemin,A-12,5
-YAMAHA-CRYPTON-SELE-ALTI,Asma Kat,B-07,2
 ```
 
-`floor` ve `shelf` boş bırakılabilir. `critical_stock` boş bırakılırsa o SKU için eşik kontrolü yapılmaz. Negatif eşikler ve mükerrer SKU satırları import hatası olarak reddedilir.
-
-Mutabakatı çalıştır:
+## Komut satırı
 
 ```bash
 warehouse-reconcile \
@@ -71,94 +53,88 @@ warehouse-reconcile \
   --issues-output reports/issues.csv
 ```
 
-Komut şu çıkış kodlarını döndürür:
+Çıkış kodları:
 
-- `0`: stok dengeli, operasyonel sorun yok
-- `1`: rapor üretildi ancak inceleme gerektiren fark veya hata var
-- `2`: CSV dosyası okunamadı ya da şeması geçersiz
+- `0`: stok dengeli
+- `1`: inceleme gereken sorun var
+- `2`: dosya veya şema hatası
 
-JSON raporu; özet, SKU satırları, beklenen stok, fiziksel sayım farkı, lokasyon ve kritik stok bilgilerini içerir. Sorun CSV'si Excel'de doğrudan açılabilmesi için UTF-8 BOM ile yazılır ve şu kolonları üretir:
+Sorun CSV kolonları:
 
 ```text
 severity,code,message,sku,event_id,location
 ```
 
-## Python API kullanımı
+## Görev yaşam döngüsü
 
 ```python
-from warehouse_ops import (
-    Movement,
-    MovementType,
-    ProductMetadata,
-    reconcile_stock,
-)
+from warehouse_ops import assign_task, create_tasks, resolve_task, start_task
+
+tasks = create_tasks(report)
+task = assign_task(tasks[0], "Enes")
+task = start_task(task)
+task = resolve_task(task, "Raf tekrar sayıldı ve stok düzeltildi.")
+```
+
+Akış:
+
+```text
+OPEN -> IN_PROGRESS -> RESOLVED
+```
+
+Kurallar:
+
+- Atanmamış görev başlatılamaz.
+- Sadece açık görev başlatılabilir.
+- Sadece devam eden görev çözülebilir.
+- Çözüm notu zorunludur.
+- Çözülmüş görev yeniden atanamaz.
+- Aynı mutabakat sorunu ikinci bir görev üretmez.
+
+## Python API
+
+```python
+from warehouse_ops import Movement, MovementType, ProductMetadata, reconcile_stock
 
 report = reconcile_stock(
     opening_stock={"TVS-JUPITER-FILTRE": 10},
-    movements=[
-        Movement("evt-1001", "TVS-JUPITER-FILTRE", MovementType.RECEIPT, 5),
-        Movement("evt-1002", "TVS-JUPITER-FILTRE", MovementType.SALE, 3),
-    ],
-    counted_stock={"TVS-JUPITER-FILTRE": 12},
+    movements=[Movement("evt-1001", "TVS-JUPITER-FILTRE", MovementType.RECEIPT, 5)],
+    counted_stock={"TVS-JUPITER-FILTRE": 15},
     product_metadata={
-        "TVS-JUPITER-FILTRE": ProductMetadata(
-            floor="Zemin",
-            shelf="A-12",
-            critical_stock=5,
-        )
+        "TVS-JUPITER-FILTRE": ProductMetadata(floor="Zemin", shelf="A-12", critical_stock=5)
     },
 )
-
-print(report.is_balanced)  # True
 ```
-
-## Veri akışı
-
-```text
-CSV dışa aktarımları + depo metadata dosyası
-        ↓
-Doğrulama ve tip dönüşümü
-        ↓
-reconcile_stock(...)
-        ↓
-Önem seviyesine göre sıralı JSON raporu + sorun CSV'si
-```
-
-Geçersiz veya mükerrer hareketler stok toplamına dahil edilmez; yapılandırılmış `ReconciliationIssue` kayıtları olarak döndürülür. Mükerrer SKU satırları sessizce ezilmez, import hatası olarak raporlanır.
 
 ## Geliştirme
 
-Python 3.11 veya üzeri gerekir.
-
 ```bash
-python -m pip install -e .
 python -m unittest discover -s tests -v
 python -m compileall -q warehouse_ops tests
 ```
 
-CI, her push ve pull request işleminde Python 3.11, 3.12 ve 3.13 üzerinde testleri çalıştırır.
+CI, Python 3.11, 3.12 ve 3.13 üzerinde çalışır.
 
 ## Proje yapısı
 
 ```text
 warehouse_ops/
-  __init__.py
   cli.py
   io.py
   reconciliation.py
+  tasks.py
 tests/
   test_io.py
   test_reconciliation.py
-.github/workflows/
-  python-ci.yml
+  test_tasks.py
 ```
 
 ## Yol haritası
 
-1. Sayım sorunlarını çalışan veya ekip bazında atama
-2. Shopify/İkas/Sentos dışa aktarımlarına uyarlayıcılar
-3. İçe aktarma sırasında satır bazlı hata karantinası
-4. Çözülmüş/açık sorun geçmişi
+1. Görevleri SQLite üzerinde kalıcı saklama
+2. Açık ve çözülmüş görev raporları
+3. Shopify, İkas ve Sentos adaptörleri
+4. Satır bazlı hata karantinası
 5. Basit web paneli
 
 ## Geliştirme notu
