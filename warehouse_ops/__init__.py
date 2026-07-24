@@ -9,8 +9,10 @@ from .io import (
     write_report_json,
 )
 from .reconciliation import (
+    IssueSeverity,
     Movement,
     MovementType,
+    ProductMetadata,
     ReconciliationIssue,
     ReconciliationReport,
     reconcile_stock,
@@ -28,8 +30,10 @@ from .tasks import (
 
 __all__ = [
     "CsvFormatError",
+    "IssueSeverity",
     "Movement",
     "MovementType",
+    "ProductMetadata",
     "ReconciliationIssue",
     "ReconciliationReport",
     "TaskStatus",
