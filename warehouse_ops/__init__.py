@@ -15,6 +15,16 @@ from .reconciliation import (
     ReconciliationReport,
     reconcile_stock,
 )
+from .tasks import (
+    TaskStatus,
+    TaskTransitionError,
+    WarehouseTask,
+    assign_task,
+    create_tasks,
+    issue_fingerprint,
+    resolve_task,
+    start_task,
+)
 
 __all__ = [
     "CsvFormatError",
@@ -22,10 +32,18 @@ __all__ = [
     "MovementType",
     "ReconciliationIssue",
     "ReconciliationReport",
+    "TaskStatus",
+    "TaskTransitionError",
+    "WarehouseTask",
+    "assign_task",
+    "create_tasks",
+    "issue_fingerprint",
     "read_movements_csv",
     "read_stock_csv",
     "reconcile_stock",
     "report_to_dict",
+    "resolve_task",
+    "start_task",
     "write_issues_csv",
     "write_report_json",
 ]
