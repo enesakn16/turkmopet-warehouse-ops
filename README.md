@@ -9,6 +9,8 @@ Türkmopet depo hareketlerini doğrulayan, fiziksel sayım farklarını öncelik
 - Sorunları `CRITICAL`, `HIGH`, `MEDIUM` ve `LOW` olarak sıralar.
 - JSON raporu ve Excel uyumlu sorun CSV'si üretir.
 - Aynı sorunu tekrar görevleştirmeden çalışan/ekip ataması ve çözüm geçmişi oluşturur.
+- Görevleri SQLite üzerinde kalıcı saklar.
+- Görev listeleme, atama, başlatma ve çözme işlemlerini komut satırından yönetir.
 
 ## Kurulum
 
@@ -41,7 +43,7 @@ sku,floor,shelf,critical_stock
 TVS-JUPITER-FILTRE,Zemin,A-12,5
 ```
 
-## Komut satırı
+## Stok mutabakatı komutu
 
 ```bash
 warehouse-reconcile \
@@ -64,6 +66,39 @@ Sorun CSV kolonları:
 ```text
 severity,code,message,sku,event_id,location
 ```
+
+## Görev yönetimi komutu
+
+Varsayılan veritabanı `warehouse-tasks.db` dosyasıdır. Farklı bir dosya kullanmak için her komuta `--database <dosya>` eklenir.
+
+Görevleri listele:
+
+```bash
+warehouse-tasks --database warehouse.db list
+warehouse-tasks --database warehouse.db list --status OPEN
+warehouse-tasks --database warehouse.db list --assignee Enes
+```
+
+Göreve çalışan ata:
+
+```bash
+warehouse-tasks --database warehouse.db assign <task_id> Enes
+```
+
+Görevi başlat:
+
+```bash
+warehouse-tasks --database warehouse.db start <task_id>
+```
+
+Görevi çözüm notuyla kapat:
+
+```bash
+warehouse-tasks --database warehouse.db resolve <task_id> \
+  --note "Raf yeniden sayıldı ve stok düzeltildi."
+```
+
+Görev işlemlerinde başarı kodu `0`, bulunamayan görev veya geçersiz durum geçişinde hata kodu `2` döner.
 
 ## Görev yaşam döngüsü
 
@@ -122,17 +157,23 @@ warehouse_ops/
   cli.py
   io.py
   reconciliation.py
+  service.py
+  task_cli.py
+  task_store.py
   tasks.py
 tests/
   test_io.py
   test_reconciliation.py
+  test_service.py
+  test_task_cli.py
+  test_task_store.py
   test_tasks.py
 ```
 
 ## Yol haritası
 
-1. Görevleri SQLite üzerinde kalıcı saklama
-2. Açık ve çözülmüş görev raporları
+1. Stok mutabakatı ve görev senkronizasyonunu tek CLI komutunda birleştirme
+2. Açık ve çözülmüş görevleri CSV olarak dışa aktarma
 3. Shopify, İkas ve Sentos adaptörleri
 4. Satır bazlı hata karantinası
 5. Basit web paneli
