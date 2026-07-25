@@ -12,12 +12,14 @@ from .io import (
     write_report_json,
 )
 from .reconciliation import reconcile_stock
+from .service import sync_reconciliation_tasks
+from .task_store import SQLiteTaskStore
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="warehouse-reconcile",
-        description="Reconcile opening stock, movements and optional physical counts.",
+        description="Reconcile stock files and optionally synchronize review tasks.",
     )
     parser.add_argument("--opening", required=True, help="CSV with sku,quantity columns")
     parser.add_argument(
@@ -41,6 +43,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--issues-output",
         help="Optional CSV path for prioritized issues requiring operational review",
+    )
+    parser.add_argument(
+        "--task-database",
+        help=(
+            "Optional SQLite database path. When provided, reconciliation issues "
+            "are synchronized into persistent warehouse tasks."
+        ),
     )
     return parser
 
@@ -70,10 +79,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.issues_output:
         write_issues_csv(report.prioritized_issues, args.issues_output)
 
+    task_summary = ""
+    if args.task_database:
+        with SQLiteTaskStore(args.task_database) as store:
+            task_result = sync_reconciliation_tasks(report, store)
+        task_summary = (
+            f" Tasks: {task_result.created_count} created, "
+            f"{task_result.existing_count} existing."
+        )
+
     status = "BALANCED" if report.is_balanced else "REVIEW_REQUIRED"
     print(
         f"{status}: {len(report.lines)} SKUs, {len(report.issues)} issues. "
-        f"Report: {Path(output_path)}"
+        f"Report: {Path(output_path)}.{task_summary}"
     )
     return 0 if report.is_balanced else 1
 
