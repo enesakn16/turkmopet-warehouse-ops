@@ -17,6 +17,7 @@ from .reconciliation import (
     ReconciliationReport,
     reconcile_stock,
 )
+from .service import TaskSyncResult, sync_reconciliation_tasks
 from .task_store import SQLiteTaskStore, TaskStoreError
 from .tasks import (
     TaskStatus,
@@ -40,6 +41,7 @@ __all__ = [
     "SQLiteTaskStore",
     "TaskStatus",
     "TaskStoreError",
+    "TaskSyncResult",
     "TaskTransitionError",
     "WarehouseTask",
     "assign_task",
@@ -51,6 +53,7 @@ __all__ = [
     "report_to_dict",
     "resolve_task",
     "start_task",
+    "sync_reconciliation_tasks",
     "write_issues_csv",
     "write_report_json",
 ]
