@@ -17,6 +17,7 @@ from .reconciliation import (
     ReconciliationReport,
     reconcile_stock,
 )
+from .task_store import SQLiteTaskStore, TaskStoreError
 from .tasks import (
     TaskStatus,
     TaskTransitionError,
@@ -36,7 +37,9 @@ __all__ = [
     "ProductMetadata",
     "ReconciliationIssue",
     "ReconciliationReport",
+    "SQLiteTaskStore",
     "TaskStatus",
+    "TaskStoreError",
     "TaskTransitionError",
     "WarehouseTask",
     "assign_task",
