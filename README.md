@@ -10,6 +10,7 @@ Türkmopet depo hareketlerini doğrulayan, fiziksel sayım farklarını öncelik
 - JSON raporu ve Excel uyumlu sorun CSV'si üretir.
 - Aynı sorunu tekrar görevleştirmeden çalışan/ekip ataması ve çözüm geçmişi oluşturur.
 - Görevleri SQLite üzerinde kalıcı saklar.
+- Mutabakat sırasında yeni sorunları tek komutla SQLite görevlerine senkronize eder.
 - Görev listeleme, atama, başlatma ve çözme işlemlerini komut satırından yönetir.
 
 ## Kurulum
@@ -43,7 +44,9 @@ sku,floor,shelf,critical_stock
 TVS-JUPITER-FILTRE,Zemin,A-12,5
 ```
 
-## Stok mutabakatı komutu
+## Stok mutabakatı ve görev senkronizasyonu
+
+Yalnızca rapor üretmek için:
 
 ```bash
 warehouse-reconcile \
@@ -54,6 +57,21 @@ warehouse-reconcile \
   --output reports/reconciliation.json \
   --issues-output reports/issues.csv
 ```
+
+Bulunan sorunları aynı çalışmada kalıcı görevlere dönüştürmek için `--task-database` eklenir:
+
+```bash
+warehouse-reconcile \
+  --opening opening.csv \
+  --movements movements.csv \
+  --counted counted.csv \
+  --metadata metadata.csv \
+  --output reports/reconciliation.json \
+  --issues-output reports/issues.csv \
+  --task-database warehouse.db
+```
+
+Komut, yeni ve daha önce var olan görev sayılarını özetler. Aynı mutabakat tekrar çalıştırıldığında mevcut görevin ataması, durumu ve çözüm geçmişi korunur; mükerrer görev oluşturulmaz.
 
 Çıkış kodları:
 
@@ -162,6 +180,7 @@ warehouse_ops/
   task_store.py
   tasks.py
 tests/
+  test_cli.py
   test_io.py
   test_reconciliation.py
   test_service.py
@@ -172,11 +191,10 @@ tests/
 
 ## Yol haritası
 
-1. Stok mutabakatı ve görev senkronizasyonunu tek CLI komutunda birleştirme
-2. Açık ve çözülmüş görevleri CSV olarak dışa aktarma
-3. Shopify, İkas ve Sentos adaptörleri
-4. Satır bazlı hata karantinası
-5. Basit web paneli
+1. Açık ve çözülmüş görevleri CSV olarak dışa aktarma
+2. Shopify, İkas ve Sentos adaptörleri
+3. Satır bazlı hata karantinası
+4. Basit web paneli
 
 ## Geliştirme notu
 
