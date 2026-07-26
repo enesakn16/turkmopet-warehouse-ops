@@ -20,6 +20,7 @@ from .reconciliation import (
 from .service import TaskSyncResult, sync_reconciliation_tasks
 from .task_store import SQLiteTaskStore, TaskStoreError
 from .tasks import (
+    SLA_BY_SEVERITY,
     TaskStatus,
     TaskTransitionError,
     WarehouseTask,
@@ -38,6 +39,7 @@ __all__ = [
     "ProductMetadata",
     "ReconciliationIssue",
     "ReconciliationReport",
+    "SLA_BY_SEVERITY",
     "SQLiteTaskStore",
     "TaskStatus",
     "TaskStoreError",
