@@ -13,6 +13,8 @@ Türkmopet depo hareketlerini doğrulayan, fiziksel sayım farklarını öncelik
 - Mutabakat sırasında yeni sorunları tek komutla SQLite görevlerine senkronize eder.
 - Görev listeleme, filtreli CSV dışa aktarma, atama, başlatma ve çözme işlemlerini komut satırından yönetir.
 - Önem seviyesine göre SLA son tarihi hesaplar ve gecikmiş açık görevleri ayrı filtreler.
+- Gecikme süresini `WATCH`, `URGENT` ve `CRITICAL` eskalasyon seviyelerine dönüştürür.
+- Eskalasyon sorumluluğunu görev önemine göre depo yöneticisi veya operasyon sorumlusuna yönlendirir.
 
 ## Kurulum
 
@@ -97,6 +99,8 @@ warehouse-tasks --database warehouse.db list
 warehouse-tasks --database warehouse.db list --status OPEN
 warehouse-tasks --database warehouse.db list --assignee Enes
 warehouse-tasks --database warehouse.db list --overdue
+warehouse-tasks --database warehouse.db list --escalated
+warehouse-tasks --database warehouse.db list --escalation-level URGENT
 ```
 
 Görev kuyruğunu Excel uyumlu CSV olarak dışa aktar:
@@ -105,6 +109,9 @@ Görev kuyruğunu Excel uyumlu CSV olarak dışa aktar:
 warehouse-tasks --database warehouse.db export reports/open-tasks.csv --status OPEN
 warehouse-tasks --database warehouse.db export reports/enes-tasks.csv --assignee Enes
 warehouse-tasks --database warehouse.db export reports/overdue.csv --overdue
+warehouse-tasks --database warehouse.db export reports/escalated.csv --escalated
+warehouse-tasks --database warehouse.db export reports/critical-escalations.csv \
+  --escalation-level CRITICAL
 warehouse-tasks --database warehouse.db export reports/resolved.csv \
   --status RESOLVED \
   --assignee Enes
@@ -113,7 +120,7 @@ warehouse-tasks --database warehouse.db export reports/resolved.csv \
 Dışa aktarılan kolonlar:
 
 ```text
-task_id,status,severity,due_at,is_overdue,issue_code,issue_message,sku,event_id,location,assignee,created_at,updated_at,resolution_note
+task_id,status,severity,due_at,is_overdue,overdue_hours,escalation_level,escalation_owner,issue_code,issue_message,sku,event_id,location,assignee,created_at,updated_at,resolution_note
 ```
 
 Çıktı UTF-8 BOM ile yazılır; Excel tarafından doğrudan açılabilir. Filtre sonucu boş olsa bile başlık satırı üretilir ve raporlama otomasyonları bozulmaz.
@@ -157,6 +164,25 @@ Kurallar:
 - `RESOLVED` görevler son tarih geçmiş olsa bile gecikmiş sayılmaz.
 - `--overdue` filtresi yalnızca çözülmemiş ve SLA süresi aşılmış görevleri getirir.
 - Python API'sinde SLA tablosu `SLA_BY_SEVERITY` üzerinden okunabilir.
+
+## Eskalasyon kuralları
+
+Eskalasyon yalnızca çözülmemiş ve SLA süresi aşılmış görevler için hesaplanır:
+
+| Gecikme | Seviye |
+|---|---|
+| 0–4 saat | `WATCH` |
+| 4–24 saat | `URGENT` |
+| 24 saatten fazla | `CRITICAL` |
+
+Sorumluluk eşlemesi:
+
+| Görev önemi | Eskalasyon sahibi |
+|---|---|
+| `CRITICAL`, `HIGH` | `warehouse-manager` |
+| `MEDIUM`, `LOW` | `operations-supervisor` |
+
+Kurallar yan etki üretmez; çekirdek katman e-posta, Slack veya telefon bildirimi göndermez. Böylece `overdue_hours`, `escalation_level` ve `escalation_owner` değerleri bağımsız test edilebilir ve daha sonra farklı bildirim kanallarına bağlanabilir.
 
 ## Görev yaşam döngüsü
 
@@ -233,7 +259,7 @@ tests/
 
 1. Shopify, İkas ve Sentos adaptörleri
 2. Satır bazlı hata karantinası
-3. Gecikmiş görevler için bildirim ve eskalasyon kuralları
+3. Eskalasyon kuyruğunu bildirim adaptörlerine bağlama
 4. Basit web paneli
 
 ## Geliştirme notu
