@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from hashlib import sha256
 from typing import Iterable
@@ -17,6 +17,14 @@ class TaskStatus(StrEnum):
 
 class TaskTransitionError(ValueError):
     """Raised when a warehouse task lifecycle transition is invalid."""
+
+
+SLA_BY_SEVERITY: dict[str, timedelta] = {
+    "CRITICAL": timedelta(hours=2),
+    "HIGH": timedelta(hours=24),
+    "MEDIUM": timedelta(hours=48),
+    "LOW": timedelta(hours=120),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +45,26 @@ class WarehouseTask:
     @property
     def is_closed(self) -> bool:
         return self.status is TaskStatus.RESOLVED
+
+    @property
+    def due_at(self) -> datetime:
+        """Return the SLA deadline derived from severity and creation time."""
+
+        try:
+            sla = SLA_BY_SEVERITY[self.severity.upper()]
+        except KeyError as exc:
+            raise ValueError(f"Unsupported task severity: {self.severity}") from exc
+        return self.created_at + sla
+
+    def is_overdue(self, *, now: datetime | None = None) -> bool:
+        """Return whether an unresolved task has passed its SLA deadline."""
+
+        if self.is_closed:
+            return False
+        timestamp = now or _utc_now()
+        if timestamp.tzinfo is None:
+            raise ValueError("Overdue checks require a timezone-aware datetime.")
+        return timestamp > self.due_at
 
 
 def _utc_now() -> datetime:
