@@ -15,6 +15,13 @@ class TaskStatus(StrEnum):
     RESOLVED = "RESOLVED"
 
 
+class EscalationLevel(StrEnum):
+    NONE = "NONE"
+    WATCH = "WATCH"
+    URGENT = "URGENT"
+    CRITICAL = "CRITICAL"
+
+
 class TaskTransitionError(ValueError):
     """Raised when a warehouse task lifecycle transition is invalid."""
 
@@ -25,6 +32,19 @@ SLA_BY_SEVERITY: dict[str, timedelta] = {
     "MEDIUM": timedelta(hours=48),
     "LOW": timedelta(hours=120),
 }
+
+ESCALATION_OWNER_BY_SEVERITY: dict[str, str] = {
+    "CRITICAL": "warehouse-manager",
+    "HIGH": "warehouse-manager",
+    "MEDIUM": "operations-supervisor",
+    "LOW": "operations-supervisor",
+}
+
+ESCALATION_THRESHOLDS: tuple[tuple[timedelta, EscalationLevel], ...] = (
+    (timedelta(hours=24), EscalationLevel.CRITICAL),
+    (timedelta(hours=4), EscalationLevel.URGENT),
+    (timedelta(0), EscalationLevel.WATCH),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,19 +76,51 @@ class WarehouseTask:
             raise ValueError(f"Unsupported task severity: {self.severity}") from exc
         return self.created_at + sla
 
+    @property
+    def escalation_owner(self) -> str:
+        """Return the team responsible when the task breaches its SLA."""
+
+        try:
+            return ESCALATION_OWNER_BY_SEVERITY[self.severity.upper()]
+        except KeyError as exc:
+            raise ValueError(f"Unsupported task severity: {self.severity}") from exc
+
     def is_overdue(self, *, now: datetime | None = None) -> bool:
         """Return whether an unresolved task has passed its SLA deadline."""
 
         if self.is_closed:
             return False
-        timestamp = now or _utc_now()
-        if timestamp.tzinfo is None:
-            raise ValueError("Overdue checks require a timezone-aware datetime.")
+        timestamp = _require_aware(now or _utc_now())
         return timestamp > self.due_at
+
+    def overdue_by(self, *, now: datetime | None = None) -> timedelta:
+        """Return elapsed time beyond the SLA, or zero for active/on-time tasks."""
+
+        if self.is_closed:
+            return timedelta(0)
+        timestamp = _require_aware(now or _utc_now())
+        return max(timestamp - self.due_at, timedelta(0))
+
+    def escalation_level(self, *, now: datetime | None = None) -> EscalationLevel:
+        """Classify overdue work without producing notification side effects."""
+
+        elapsed = self.overdue_by(now=now)
+        if elapsed == timedelta(0):
+            return EscalationLevel.NONE
+        for threshold, level in ESCALATION_THRESHOLDS:
+            if elapsed > threshold:
+                return level
+        return EscalationLevel.WATCH
 
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _require_aware(timestamp: datetime) -> datetime:
+    if timestamp.tzinfo is None:
+        raise ValueError("Task time calculations require a timezone-aware datetime.")
+    return timestamp
 
 
 def issue_fingerprint(issue: ReconciliationIssue) -> str:
@@ -94,7 +146,7 @@ def create_tasks(
 ) -> tuple[WarehouseTask, ...]:
     """Create tasks for newly detected issues while preserving existing task history."""
 
-    timestamp = now or _utc_now()
+    timestamp = _require_aware(now or _utc_now())
     existing = {task.task_id: task for task in existing_tasks}
     tasks = list(existing.values())
 
@@ -127,7 +179,7 @@ def assign_task(task: WarehouseTask, assignee: str, *, now: datetime | None = No
         raise ValueError("Assignee cannot be empty.")
     if task.is_closed:
         raise TaskTransitionError("Resolved tasks cannot be reassigned.")
-    return replace(task, assignee=normalized, updated_at=now or _utc_now())
+    return replace(task, assignee=normalized, updated_at=_require_aware(now or _utc_now()))
 
 
 def start_task(task: WarehouseTask, *, now: datetime | None = None) -> WarehouseTask:
@@ -135,7 +187,7 @@ def start_task(task: WarehouseTask, *, now: datetime | None = None) -> Warehouse
         raise TaskTransitionError("Only open tasks can be started.")
     if not task.assignee:
         raise TaskTransitionError("Task must be assigned before it can be started.")
-    return replace(task, status=TaskStatus.IN_PROGRESS, updated_at=now or _utc_now())
+    return replace(task, status=TaskStatus.IN_PROGRESS, updated_at=_require_aware(now or _utc_now()))
 
 
 def resolve_task(
@@ -153,5 +205,5 @@ def resolve_task(
         task,
         status=TaskStatus.RESOLVED,
         resolution_note=note,
-        updated_at=now or _utc_now(),
+        updated_at=_require_aware(now or _utc_now()),
     )
