@@ -12,6 +12,7 @@ Türkmopet depo hareketlerini doğrulayan, fiziksel sayım farklarını öncelik
 - Görevleri SQLite üzerinde kalıcı saklar.
 - Mutabakat sırasında yeni sorunları tek komutla SQLite görevlerine senkronize eder.
 - Görev listeleme, filtreli CSV dışa aktarma, atama, başlatma ve çözme işlemlerini komut satırından yönetir.
+- Önem seviyesine göre SLA son tarihi hesaplar ve gecikmiş açık görevleri ayrı filtreler.
 
 ## Kurulum
 
@@ -95,6 +96,7 @@ Görevleri listele:
 warehouse-tasks --database warehouse.db list
 warehouse-tasks --database warehouse.db list --status OPEN
 warehouse-tasks --database warehouse.db list --assignee Enes
+warehouse-tasks --database warehouse.db list --overdue
 ```
 
 Görev kuyruğunu Excel uyumlu CSV olarak dışa aktar:
@@ -102,6 +104,7 @@ Görev kuyruğunu Excel uyumlu CSV olarak dışa aktar:
 ```bash
 warehouse-tasks --database warehouse.db export reports/open-tasks.csv --status OPEN
 warehouse-tasks --database warehouse.db export reports/enes-tasks.csv --assignee Enes
+warehouse-tasks --database warehouse.db export reports/overdue.csv --overdue
 warehouse-tasks --database warehouse.db export reports/resolved.csv \
   --status RESOLVED \
   --assignee Enes
@@ -110,7 +113,7 @@ warehouse-tasks --database warehouse.db export reports/resolved.csv \
 Dışa aktarılan kolonlar:
 
 ```text
-task_id,status,severity,issue_code,issue_message,sku,event_id,location,assignee,created_at,updated_at,resolution_note
+task_id,status,severity,due_at,is_overdue,issue_code,issue_message,sku,event_id,location,assignee,created_at,updated_at,resolution_note
 ```
 
 Çıktı UTF-8 BOM ile yazılır; Excel tarafından doğrudan açılabilir. Filtre sonucu boş olsa bile başlık satırı üretilir ve raporlama otomasyonları bozulmaz.
@@ -135,6 +138,25 @@ warehouse-tasks --database warehouse.db resolve <task_id> \
 ```
 
 Görev işlemlerinde başarı kodu `0`, bulunamayan görev veya geçersiz durum geçişinde hata kodu `2` döner.
+
+## SLA ve gecikme kuralları
+
+Görev son tarihi `created_at` ve önem seviyesinden otomatik hesaplanır:
+
+| Önem | SLA |
+|---|---:|
+| `CRITICAL` | 2 saat |
+| `HIGH` | 24 saat |
+| `MEDIUM` | 48 saat |
+| `LOW` | 120 saat |
+
+Kurallar:
+
+- Son tarih ayrı bir veritabanı alanı olarak saklanmaz; görev oluşturma zamanı ve SLA kuralından deterministik hesaplanır.
+- Son tarih tam olarak geldiğinde görev gecikmiş sayılmaz; süre aşıldığında gecikmiş olur.
+- `RESOLVED` görevler son tarih geçmiş olsa bile gecikmiş sayılmaz.
+- `--overdue` filtresi yalnızca çözülmemiş ve SLA süresi aşılmış görevleri getirir.
+- Python API'sinde SLA tablosu `SLA_BY_SEVERITY` üzerinden okunabilir.
 
 ## Görev yaşam döngüsü
 
@@ -211,7 +233,7 @@ tests/
 
 1. Shopify, İkas ve Sentos adaptörleri
 2. Satır bazlı hata karantinası
-3. Görev önceliğine göre SLA ve gecikme uyarıları
+3. Gecikmiş görevler için bildirim ve eskalasyon kuralları
 4. Basit web paneli
 
 ## Geliştirme notu
