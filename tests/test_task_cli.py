@@ -51,6 +51,7 @@ class WarehouseTaskCliTests(unittest.TestCase):
         self.assertIn("TVS-001", output)
         self.assertIn("Zemin / A-12", output)
         self.assertIn("2026-07-26T12:00:00+00:00", output)
+        self.assertIn("warehouse-manager", output)
 
     def test_lists_only_overdue_unresolved_tasks(self) -> None:
         exit_code, output = self.run_cli("list", "--overdue")
@@ -67,6 +68,20 @@ class WarehouseTaskCliTests(unittest.TestCase):
         )
         _, resolved_output = self.run_cli("list", "--overdue")
         self.assertIn("No tasks found.", resolved_output)
+
+    def test_lists_escalated_tasks_and_specific_level(self) -> None:
+        exit_code, output = self.run_cli("list", "--escalated")
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("task-001", output)
+        self.assertIn("URGENT", output)
+        self.assertIn("warehouse-manager", output)
+
+        _, urgent_output = self.run_cli("list", "--escalation-level", "URGENT")
+        self.assertIn("task-001", urgent_output)
+
+        _, watch_output = self.run_cli("list", "--escalation-level", "WATCH")
+        self.assertIn("No tasks found.", watch_output)
 
     def test_exports_excel_friendly_filtered_task_queue(self) -> None:
         output_path = Path(self.temp_dir.name) / "reports" / "open-tasks.csv"
@@ -89,10 +104,30 @@ class WarehouseTaskCliTests(unittest.TestCase):
         self.assertEqual(rows[0]["severity"], "HIGH")
         self.assertEqual(rows[0]["due_at"], "2026-07-26T12:00:00+00:00")
         self.assertEqual(rows[0]["is_overdue"], "yes")
+        self.assertGreater(float(rows[0]["overdue_hours"]), 4)
+        self.assertEqual(rows[0]["escalation_level"], "URGENT")
+        self.assertEqual(rows[0]["escalation_owner"], "warehouse-manager")
         self.assertEqual(rows[0]["sku"], "TVS-001")
         self.assertEqual(rows[0]["location"], "Zemin / A-12")
         self.assertEqual(rows[0]["created_at"], "2026-07-25T12:00:00+00:00")
         self.assertEqual(rows[0]["resolution_note"], "")
+
+    def test_exports_only_requested_escalation_level(self) -> None:
+        output_path = Path(self.temp_dir.name) / "urgent.csv"
+
+        exit_code, output = self.run_cli(
+            "export",
+            str(output_path),
+            "--escalation-level",
+            "URGENT",
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("EXPORTED: 1 tasks", output)
+        with output_path.open(encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual(rows[0]["task_id"], "task-001")
+        self.assertEqual(rows[0]["escalation_level"], "URGENT")
 
     def test_export_respects_assignee_filter_and_resolution_fields(self) -> None:
         self.assertEqual(self.run_cli("assign", "task-001", "Enes")[0], 0)
@@ -118,6 +153,8 @@ class WarehouseTaskCliTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["assignee"], "Enes")
         self.assertEqual(rows[0]["is_overdue"], "no")
+        self.assertEqual(rows[0]["overdue_hours"], "0.00")
+        self.assertEqual(rows[0]["escalation_level"], "NONE")
         self.assertEqual(rows[0]["resolution_note"], "Raf yeniden sayıldı.")
 
     def test_export_writes_header_for_empty_queue(self) -> None:
@@ -135,7 +172,7 @@ class WarehouseTaskCliTests(unittest.TestCase):
         with output_path.open(encoding="utf-8-sig", newline="") as handle:
             rows = list(csv.DictReader(handle))
             self.assertEqual(rows, [])
-            self.assertIn("due_at", handle.seek(0) or handle.read())
+            self.assertIn("escalation_level", handle.seek(0) or handle.read())
 
     def test_assign_start_and_resolve_lifecycle(self) -> None:
         self.assertEqual(self.run_cli("assign", "task-001", "Enes")[0], 0)
