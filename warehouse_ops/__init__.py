@@ -20,7 +20,10 @@ from .reconciliation import (
 from .service import TaskSyncResult, sync_reconciliation_tasks
 from .task_store import SQLiteTaskStore, TaskStoreError
 from .tasks import (
+    ESCALATION_OWNER_BY_SEVERITY,
+    ESCALATION_THRESHOLDS,
     SLA_BY_SEVERITY,
+    EscalationLevel,
     TaskStatus,
     TaskTransitionError,
     WarehouseTask,
@@ -33,6 +36,9 @@ from .tasks import (
 
 __all__ = [
     "CsvFormatError",
+    "ESCALATION_OWNER_BY_SEVERITY",
+    "ESCALATION_THRESHOLDS",
+    "EscalationLevel",
     "IssueSeverity",
     "Movement",
     "MovementType",
