@@ -7,6 +7,8 @@ from warehouse_ops.reconciliation import (
     ReconciliationReport,
 )
 from warehouse_ops.tasks import (
+    ESCALATION_OWNER_BY_SEVERITY,
+    EscalationLevel,
     SLA_BY_SEVERITY,
     TaskStatus,
     TaskTransitionError,
@@ -93,7 +95,37 @@ class WarehouseTaskTests(unittest.TestCase):
         )
         self.assertFalse(resolved.is_overdue(now=NOW + timedelta(days=1)))
 
-    def test_rejects_unknown_severity_and_naive_overdue_time(self) -> None:
+    def test_calculates_overdue_duration_and_escalation_levels(self) -> None:
+        task = create_tasks(self._report(), now=NOW)[0]
+        due_at = task.due_at
+
+        self.assertEqual(timedelta(0), task.overdue_by(now=due_at))
+        self.assertEqual(EscalationLevel.NONE, task.escalation_level(now=due_at))
+        self.assertEqual(EscalationLevel.WATCH, task.escalation_level(now=due_at + timedelta(hours=1)))
+        self.assertEqual(EscalationLevel.URGENT, task.escalation_level(now=due_at + timedelta(hours=5)))
+        self.assertEqual(EscalationLevel.CRITICAL, task.escalation_level(now=due_at + timedelta(hours=25)))
+        self.assertEqual(timedelta(hours=25), task.overdue_by(now=due_at + timedelta(hours=25)))
+
+    def test_resolved_tasks_have_no_active_escalation(self) -> None:
+        task = create_tasks(self._report(), now=NOW)[0]
+        resolved = resolve_task(
+            start_task(assign_task(task, "Enes", now=LATER), now=LATER),
+            "Done",
+            now=task.due_at + timedelta(hours=30),
+        )
+
+        self.assertEqual(timedelta(0), resolved.overdue_by(now=task.due_at + timedelta(days=2)))
+        self.assertEqual(EscalationLevel.NONE, resolved.escalation_level(now=task.due_at + timedelta(days=2)))
+
+    def test_assigns_escalation_owner_by_severity(self) -> None:
+        critical, medium = create_tasks(self._report(), now=NOW)
+
+        self.assertEqual("warehouse-manager", critical.escalation_owner)
+        self.assertEqual("operations-supervisor", medium.escalation_owner)
+        self.assertEqual("warehouse-manager", ESCALATION_OWNER_BY_SEVERITY["HIGH"])
+        self.assertEqual("operations-supervisor", ESCALATION_OWNER_BY_SEVERITY["LOW"])
+
+    def test_rejects_unknown_severity_and_naive_task_times(self) -> None:
         task = WarehouseTask(
             task_id="unknown",
             issue_code="UNKNOWN",
@@ -109,10 +141,14 @@ class WarehouseTaskTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             _ = task.due_at
+        with self.assertRaises(ValueError):
+            _ = task.escalation_owner
 
         valid = create_tasks(self._report(), now=NOW)[0]
         with self.assertRaises(ValueError):
             valid.is_overdue(now=datetime(2026, 7, 24, 22, 0))
+        with self.assertRaises(ValueError):
+            valid.overdue_by(now=datetime(2026, 7, 24, 22, 0))
 
     def test_cannot_start_unassigned_task(self) -> None:
         task = create_tasks(self._report(), now=NOW)[0]
