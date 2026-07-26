@@ -11,7 +11,7 @@ Türkmopet depo hareketlerini doğrulayan, fiziksel sayım farklarını öncelik
 - Aynı sorunu tekrar görevleştirmeden çalışan/ekip ataması ve çözüm geçmişi oluşturur.
 - Görevleri SQLite üzerinde kalıcı saklar.
 - Mutabakat sırasında yeni sorunları tek komutla SQLite görevlerine senkronize eder.
-- Görev listeleme, atama, başlatma ve çözme işlemlerini komut satırından yönetir.
+- Görev listeleme, filtreli CSV dışa aktarma, atama, başlatma ve çözme işlemlerini komut satırından yönetir.
 
 ## Kurulum
 
@@ -96,6 +96,24 @@ warehouse-tasks --database warehouse.db list
 warehouse-tasks --database warehouse.db list --status OPEN
 warehouse-tasks --database warehouse.db list --assignee Enes
 ```
+
+Görev kuyruğunu Excel uyumlu CSV olarak dışa aktar:
+
+```bash
+warehouse-tasks --database warehouse.db export reports/open-tasks.csv --status OPEN
+warehouse-tasks --database warehouse.db export reports/enes-tasks.csv --assignee Enes
+warehouse-tasks --database warehouse.db export reports/resolved.csv \
+  --status RESOLVED \
+  --assignee Enes
+```
+
+Dışa aktarılan kolonlar:
+
+```text
+task_id,status,severity,issue_code,issue_message,sku,event_id,location,assignee,created_at,updated_at,resolution_note
+```
+
+Çıktı UTF-8 BOM ile yazılır; Excel tarafından doğrudan açılabilir. Filtre sonucu boş olsa bile başlık satırı üretilir ve raporlama otomasyonları bozulmaz.
 
 Göreve çalışan ata:
 
@@ -191,9 +209,9 @@ tests/
 
 ## Yol haritası
 
-1. Açık ve çözülmüş görevleri CSV olarak dışa aktarma
-2. Shopify, İkas ve Sentos adaptörleri
-3. Satır bazlı hata karantinası
+1. Shopify, İkas ve Sentos adaptörleri
+2. Satır bazlı hata karantinası
+3. Görev önceliğine göre SLA ve gecikme uyarıları
 4. Basit web paneli
 
 ## Geliştirme notu
