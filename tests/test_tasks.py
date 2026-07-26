@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import unittest
 
 from warehouse_ops.reconciliation import (
@@ -7,8 +7,10 @@ from warehouse_ops.reconciliation import (
     ReconciliationReport,
 )
 from warehouse_ops.tasks import (
+    SLA_BY_SEVERITY,
     TaskStatus,
     TaskTransitionError,
+    WarehouseTask,
     assign_task,
     create_tasks,
     resolve_task,
@@ -68,6 +70,49 @@ class WarehouseTaskTests(unittest.TestCase):
         self.assertEqual(TaskStatus.RESOLVED, resolved.status)
         self.assertTrue(resolved.is_closed)
         self.assertEqual("Raf sayımı tekrarlandı; stok düzeltildi.", resolved.resolution_note)
+
+    def test_calculates_due_at_from_severity_sla(self) -> None:
+        tasks = create_tasks(self._report(), now=NOW)
+        critical = tasks[0]
+        medium = tasks[1]
+
+        self.assertEqual(NOW + timedelta(hours=2), critical.due_at)
+        self.assertEqual(NOW + timedelta(hours=48), medium.due_at)
+        self.assertEqual(timedelta(hours=24), SLA_BY_SEVERITY["HIGH"])
+        self.assertEqual(timedelta(hours=120), SLA_BY_SEVERITY["LOW"])
+
+    def test_marks_only_unresolved_late_tasks_as_overdue(self) -> None:
+        task = create_tasks(self._report(), now=NOW)[0]
+        self.assertFalse(task.is_overdue(now=NOW + timedelta(hours=2)))
+        self.assertTrue(task.is_overdue(now=NOW + timedelta(hours=2, seconds=1)))
+
+        resolved = resolve_task(
+            start_task(assign_task(task, "Enes", now=LATER), now=LATER),
+            "Done",
+            now=NOW + timedelta(hours=3),
+        )
+        self.assertFalse(resolved.is_overdue(now=NOW + timedelta(days=1)))
+
+    def test_rejects_unknown_severity_and_naive_overdue_time(self) -> None:
+        task = WarehouseTask(
+            task_id="unknown",
+            issue_code="UNKNOWN",
+            issue_message="Unknown severity",
+            severity="URGENT",
+            sku=None,
+            event_id=None,
+            location=None,
+            status=TaskStatus.OPEN,
+            assignee=None,
+            created_at=NOW,
+            updated_at=NOW,
+        )
+        with self.assertRaises(ValueError):
+            _ = task.due_at
+
+        valid = create_tasks(self._report(), now=NOW)[0]
+        with self.assertRaises(ValueError):
+            valid.is_overdue(now=datetime(2026, 7, 24, 22, 0))
 
     def test_cannot_start_unassigned_task(self) -> None:
         task = create_tasks(self._report(), now=NOW)[0]
