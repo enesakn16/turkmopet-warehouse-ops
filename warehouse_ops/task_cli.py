@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
 
 from .task_store import SQLiteTaskStore, TaskStoreError
@@ -17,7 +18,7 @@ from .tasks import (
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="warehouse-tasks",
-        description="List and update persisted warehouse reconciliation tasks.",
+        description="List, export and update persisted warehouse reconciliation tasks.",
     )
     parser.add_argument(
         "--database",
@@ -28,8 +29,14 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     list_parser = commands.add_parser("list", help="List persisted warehouse tasks")
-    list_parser.add_argument("--status", choices=[status.value for status in TaskStatus])
-    list_parser.add_argument("--assignee", help="Filter tasks by assignee")
+    _add_task_filters(list_parser)
+
+    export_parser = commands.add_parser(
+        "export",
+        help="Export persisted warehouse tasks as an Excel-friendly CSV file",
+    )
+    export_parser.add_argument("output", help="Destination CSV path")
+    _add_task_filters(export_parser)
 
     assign_parser = commands.add_parser("assign", help="Assign an open task")
     assign_parser.add_argument("task_id")
@@ -43,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_parser.add_argument("--note", required=True, help="Resolution note")
 
     return parser
+
+
+def _add_task_filters(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--status", choices=[status.value for status in TaskStatus])
+    parser.add_argument("--assignee", help="Filter tasks by assignee")
 
 
 def _require_task(store: SQLiteTaskStore, task_id: str) -> WarehouseTask:
@@ -74,16 +86,61 @@ def _print_tasks(tasks: tuple[WarehouseTask, ...]) -> None:
         )
 
 
+def _write_tasks_csv(tasks: tuple[WarehouseTask, ...], output: Path) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=(
+                "task_id",
+                "status",
+                "severity",
+                "issue_code",
+                "issue_message",
+                "sku",
+                "event_id",
+                "location",
+                "assignee",
+                "created_at",
+                "updated_at",
+                "resolution_note",
+            ),
+        )
+        writer.writeheader()
+        for task in tasks:
+            writer.writerow(
+                {
+                    "task_id": task.task_id,
+                    "status": task.status.value,
+                    "severity": task.severity,
+                    "issue_code": task.issue_code,
+                    "issue_message": task.issue_message,
+                    "sku": task.sku or "",
+                    "event_id": task.event_id or "",
+                    "location": task.location or "",
+                    "assignee": task.assignee or "",
+                    "created_at": task.created_at.isoformat(),
+                    "updated_at": task.updated_at.isoformat(),
+                    "resolution_note": task.resolution_note or "",
+                }
+            )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     database = Path(args.database)
 
     try:
         with SQLiteTaskStore(database) as store:
-            if args.command == "list":
+            if args.command in {"list", "export"}:
                 status = TaskStatus(args.status) if args.status else None
                 tasks = store.list_tasks(status=status, assignee=args.assignee)
-                _print_tasks(tasks)
+                if args.command == "list":
+                    _print_tasks(tasks)
+                else:
+                    output = Path(args.output)
+                    _write_tasks_csv(tasks, output)
+                    print(f"EXPORTED: {len(tasks)} tasks -> {output}")
                 return 0
 
             task = _require_task(store, args.task_id)
@@ -102,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
                 f" (assignee: {updated.assignee or '-'})"
             )
             return 0
-    except (TaskStoreError, TaskTransitionError, ValueError) as exc:
+    except (OSError, TaskStoreError, TaskTransitionError, ValueError) as exc:
         print(f"Task operation failed: {exc}")
         return 2
 
