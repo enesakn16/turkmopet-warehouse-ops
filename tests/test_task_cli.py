@@ -50,6 +50,23 @@ class WarehouseTaskCliTests(unittest.TestCase):
         self.assertIn("task-001", output)
         self.assertIn("TVS-001", output)
         self.assertIn("Zemin / A-12", output)
+        self.assertIn("2026-07-26T12:00:00+00:00", output)
+
+    def test_lists_only_overdue_unresolved_tasks(self) -> None:
+        exit_code, output = self.run_cli("list", "--overdue")
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("task-001", output)
+        self.assertIn("yes", output)
+
+        self.assertEqual(self.run_cli("assign", "task-001", "Enes")[0], 0)
+        self.assertEqual(self.run_cli("start", "task-001")[0], 0)
+        self.assertEqual(
+            self.run_cli("resolve", "task-001", "--note", "Raf yeniden sayıldı.")[0],
+            0,
+        )
+        _, resolved_output = self.run_cli("list", "--overdue")
+        self.assertIn("No tasks found.", resolved_output)
 
     def test_exports_excel_friendly_filtered_task_queue(self) -> None:
         output_path = Path(self.temp_dir.name) / "reports" / "open-tasks.csv"
@@ -70,6 +87,8 @@ class WarehouseTaskCliTests(unittest.TestCase):
         self.assertEqual(rows[0]["task_id"], "task-001")
         self.assertEqual(rows[0]["status"], "OPEN")
         self.assertEqual(rows[0]["severity"], "HIGH")
+        self.assertEqual(rows[0]["due_at"], "2026-07-26T12:00:00+00:00")
+        self.assertEqual(rows[0]["is_overdue"], "yes")
         self.assertEqual(rows[0]["sku"], "TVS-001")
         self.assertEqual(rows[0]["location"], "Zemin / A-12")
         self.assertEqual(rows[0]["created_at"], "2026-07-25T12:00:00+00:00")
@@ -98,6 +117,7 @@ class WarehouseTaskCliTests(unittest.TestCase):
             rows = list(csv.DictReader(handle))
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["assignee"], "Enes")
+        self.assertEqual(rows[0]["is_overdue"], "no")
         self.assertEqual(rows[0]["resolution_note"], "Raf yeniden sayıldı.")
 
     def test_export_writes_header_for_empty_queue(self) -> None:
@@ -115,7 +135,7 @@ class WarehouseTaskCliTests(unittest.TestCase):
         with output_path.open(encoding="utf-8-sig", newline="") as handle:
             rows = list(csv.DictReader(handle))
             self.assertEqual(rows, [])
-            self.assertIn("task_id", handle.seek(0) or handle.read())
+            self.assertIn("due_at", handle.seek(0) or handle.read())
 
     def test_assign_start_and_resolve_lifecycle(self) -> None:
         self.assertEqual(self.run_cli("assign", "task-001", "Enes")[0], 0)
