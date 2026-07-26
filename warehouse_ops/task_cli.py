@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .task_store import SQLiteTaskStore, TaskStoreError
 from .tasks import (
+    EscalationLevel,
     TaskStatus,
     TaskTransitionError,
     WarehouseTask,
@@ -61,6 +62,16 @@ def _add_task_filters(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Include only unresolved tasks that have exceeded their severity SLA",
     )
+    parser.add_argument(
+        "--escalated",
+        action="store_true",
+        help="Include only overdue tasks with an active escalation level",
+    )
+    parser.add_argument(
+        "--escalation-level",
+        choices=[level.value for level in EscalationLevel if level is not EscalationLevel.NONE],
+        help="Include only tasks at a specific escalation level",
+    )
 
 
 def _require_task(store: SQLiteTaskStore, task_id: str) -> WarehouseTask:
@@ -70,15 +81,30 @@ def _require_task(store: SQLiteTaskStore, task_id: str) -> WarehouseTask:
     return task
 
 
-def _filter_overdue(
+def _filter_tasks(
     tasks: tuple[WarehouseTask, ...],
     *,
     overdue_only: bool,
+    escalated_only: bool,
+    escalation_level: EscalationLevel | None,
     now: datetime,
 ) -> tuple[WarehouseTask, ...]:
-    if not overdue_only:
-        return tasks
-    return tuple(task for task in tasks if task.is_overdue(now=now))
+    filtered = tasks
+    if overdue_only:
+        filtered = tuple(task for task in filtered if task.is_overdue(now=now))
+    if escalated_only:
+        filtered = tuple(
+            task for task in filtered if task.escalation_level(now=now) is not EscalationLevel.NONE
+        )
+    if escalation_level is not None:
+        filtered = tuple(
+            task for task in filtered if task.escalation_level(now=now) is escalation_level
+        )
+    return filtered
+
+
+def _overdue_hours(task: WarehouseTask, *, now: datetime) -> str:
+    return f"{task.overdue_by(now=now).total_seconds() / 3600:.2f}"
 
 
 def _print_tasks(tasks: tuple[WarehouseTask, ...], *, now: datetime) -> None:
@@ -86,7 +112,10 @@ def _print_tasks(tasks: tuple[WarehouseTask, ...], *, now: datetime) -> None:
         print("No tasks found.")
         return
 
-    print("task_id | status | severity | overdue | due_at | assignee | sku | location | issue")
+    print(
+        "task_id | status | severity | overdue | overdue_hours | escalation | "
+        "escalation_owner | due_at | assignee | sku | location | issue"
+    )
     for task in tasks:
         print(
             " | ".join(
@@ -95,6 +124,9 @@ def _print_tasks(tasks: tuple[WarehouseTask, ...], *, now: datetime) -> None:
                     task.status.value,
                     task.severity,
                     "yes" if task.is_overdue(now=now) else "no",
+                    _overdue_hours(task, now=now),
+                    task.escalation_level(now=now).value,
+                    task.escalation_owner,
                     task.due_at.isoformat(),
                     task.assignee or "-",
                     task.sku or "-",
@@ -121,6 +153,9 @@ def _write_tasks_csv(
                 "severity",
                 "due_at",
                 "is_overdue",
+                "overdue_hours",
+                "escalation_level",
+                "escalation_owner",
                 "issue_code",
                 "issue_message",
                 "sku",
@@ -141,6 +176,9 @@ def _write_tasks_csv(
                     "severity": task.severity,
                     "due_at": task.due_at.isoformat(),
                     "is_overdue": "yes" if task.is_overdue(now=now) else "no",
+                    "overdue_hours": _overdue_hours(task, now=now),
+                    "escalation_level": task.escalation_level(now=now).value,
+                    "escalation_owner": task.escalation_owner,
                     "issue_code": task.issue_code,
                     "issue_message": task.issue_message,
                     "sku": task.sku or "",
@@ -164,7 +202,14 @@ def main(argv: list[str] | None = None) -> int:
                 status = TaskStatus(args.status) if args.status else None
                 tasks = store.list_tasks(status=status, assignee=args.assignee)
                 now = datetime.now(timezone.utc)
-                tasks = _filter_overdue(tasks, overdue_only=args.overdue, now=now)
+                level = EscalationLevel(args.escalation_level) if args.escalation_level else None
+                tasks = _filter_tasks(
+                    tasks,
+                    overdue_only=args.overdue,
+                    escalated_only=args.escalated,
+                    escalation_level=level,
+                    now=now,
+                )
                 if args.command == "list":
                     _print_tasks(tasks, now=now)
                 else:
