@@ -8,6 +8,12 @@ from .io import (
     write_issues_csv,
     write_report_json,
 )
+from .notifications import (
+    ConsoleEscalationNotifier,
+    NotificationDelivery,
+    NotificationDispatchResult,
+    dispatch_escalation_notifications,
+)
 from .reconciliation import (
     IssueSeverity,
     Movement,
@@ -35,6 +41,7 @@ from .tasks import (
 )
 
 __all__ = [
+    "ConsoleEscalationNotifier",
     "CsvFormatError",
     "ESCALATION_OWNER_BY_SEVERITY",
     "ESCALATION_THRESHOLDS",
@@ -42,6 +49,8 @@ __all__ = [
     "IssueSeverity",
     "Movement",
     "MovementType",
+    "NotificationDelivery",
+    "NotificationDispatchResult",
     "ProductMetadata",
     "ReconciliationIssue",
     "ReconciliationReport",
@@ -54,6 +63,7 @@ __all__ = [
     "WarehouseTask",
     "assign_task",
     "create_tasks",
+    "dispatch_escalation_notifications",
     "issue_fingerprint",
     "read_movements_csv",
     "read_stock_csv",
