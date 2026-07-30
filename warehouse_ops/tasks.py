@@ -42,6 +42,10 @@ ESCALATION_OWNER_BY_SEVERITY: dict[str, str] = {
 
 URGENT_AFTER = timedelta(hours=4)
 CRITICAL_AFTER = timedelta(hours=24)
+ESCALATION_THRESHOLDS: dict[str, timedelta] = {
+    EscalationLevel.URGENT.value: URGENT_AFTER,
+    EscalationLevel.CRITICAL.value: CRITICAL_AFTER,
+}
 
 
 @dataclass(frozen=True, slots=True)
