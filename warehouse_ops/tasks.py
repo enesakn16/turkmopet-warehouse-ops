@@ -40,11 +40,8 @@ ESCALATION_OWNER_BY_SEVERITY: dict[str, str] = {
     "LOW": "operations-supervisor",
 }
 
-ESCALATION_THRESHOLDS: tuple[tuple[timedelta, EscalationLevel], ...] = (
-    (timedelta(hours=24), EscalationLevel.CRITICAL),
-    (timedelta(hours=4), EscalationLevel.URGENT),
-    (timedelta(0), EscalationLevel.WATCH),
-)
+URGENT_AFTER = timedelta(hours=4)
+CRITICAL_AFTER = timedelta(hours=24)
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,14 +99,19 @@ class WarehouseTask:
         return max(timestamp - self.due_at, timedelta(0))
 
     def escalation_level(self, *, now: datetime | None = None) -> EscalationLevel:
-        """Classify overdue work without producing notification side effects."""
+        """Classify overdue work using the documented boundary semantics.
+
+        Four hours overdue is URGENT. A task becomes CRITICAL only after it has
+        been overdue for more than 24 hours, so exactly 24 hours remains URGENT.
+        """
 
         elapsed = self.overdue_by(now=now)
         if elapsed == timedelta(0):
             return EscalationLevel.NONE
-        for threshold, level in ESCALATION_THRESHOLDS:
-            if elapsed > threshold:
-                return level
+        if elapsed > CRITICAL_AFTER:
+            return EscalationLevel.CRITICAL
+        if elapsed >= URGENT_AFTER:
+            return EscalationLevel.URGENT
         return EscalationLevel.WATCH
 
 
