@@ -5,6 +5,7 @@ import csv
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .notifications import ConsoleEscalationNotifier, dispatch_escalation_notifications
 from .task_store import SQLiteTaskStore, TaskStoreError
 from .tasks import (
     EscalationLevel,
@@ -39,6 +40,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export_parser.add_argument("output", help="Destination CSV path")
     _add_task_filters(export_parser)
+
+    notify_parser = commands.add_parser(
+        "notify",
+        help="Preview active escalation notifications without external side effects",
+    )
+    notify_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        required=True,
+        help="Required safety flag; print notifications without recording delivery",
+    )
 
     assign_parser = commands.add_parser("assign", help="Assign an open task")
     assign_parser.add_argument("task_id")
@@ -216,6 +228,21 @@ def main(argv: list[str] | None = None) -> int:
                     output = Path(args.output)
                     _write_tasks_csv(tasks, output, now=now)
                     print(f"EXPORTED: {len(tasks)} tasks -> {output}")
+                return 0
+
+            if args.command == "notify":
+                now = datetime.now(timezone.utc)
+                result = dispatch_escalation_notifications(
+                    store.list_tasks(),
+                    store=store,
+                    notifier=ConsoleEscalationNotifier(dry_run=True),
+                    now=now,
+                )
+                print(
+                    "NOTIFICATION PREVIEW: "
+                    f"{len(result.delivered)} active, "
+                    f"{len(result.skipped_delivery_keys)} previously delivered"
+                )
                 return 0
 
             task = _require_task(store, args.task_id)
