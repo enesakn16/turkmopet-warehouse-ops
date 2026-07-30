@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -185,6 +186,44 @@ class WarehouseTaskCliTests(unittest.TestCase):
             rows = list(csv.DictReader(handle))
             self.assertEqual(rows, [])
             self.assertIn("escalation_level", handle.seek(0) or handle.read())
+
+    def test_notify_text_preview_preserves_human_readable_output(self) -> None:
+        exit_code, output = self.run_cli("notify", "--dry-run")
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("DRY-RUN [URGENT] task=task-001", output)
+        self.assertIn("NOTIFICATION PREVIEW: 1 active, 0 previously delivered", output)
+
+    def test_notify_json_preview_returns_stable_machine_readable_contract(self) -> None:
+        exit_code, output = self.run_cli("notify", "--dry-run", "--format", "json")
+
+        self.assertEqual(exit_code, 0)
+        document = json.loads(output)
+        self.assertEqual(document["format_version"], 1)
+        self.assertTrue(document["dry_run"])
+        self.assertEqual(document["generated_at"], "2026-07-26T17:00:00+00:00")
+        self.assertEqual(document["summary"], {"active": 1, "previously_delivered": 0})
+        self.assertEqual(document["skipped_delivery_keys"], [])
+        self.assertEqual(len(document["notifications"]), 1)
+
+        notification = document["notifications"][0]
+        self.assertEqual(notification["task_id"], "task-001")
+        self.assertEqual(notification["escalation_level"], "URGENT")
+        self.assertEqual(notification["escalation_owner"], "warehouse-manager")
+        self.assertEqual(notification["severity"], "HIGH")
+        self.assertEqual(notification["sku"], "TVS-001")
+        self.assertEqual(notification["channel"], "console")
+        self.assertIn("Counted stock differs", notification["message"])
+        self.assertIn("task=task-001", notification["payload"])
+
+    def test_notify_json_preview_does_not_persist_delivery(self) -> None:
+        first_exit, first_output = self.run_cli("notify", "--dry-run", "--format", "json")
+        second_exit, second_output = self.run_cli("notify", "--dry-run", "--format", "json")
+
+        self.assertEqual(first_exit, 0)
+        self.assertEqual(second_exit, 0)
+        self.assertEqual(json.loads(first_output)["summary"], {"active": 1, "previously_delivered": 0})
+        self.assertEqual(json.loads(second_output)["summary"], {"active": 1, "previously_delivered": 0})
 
     def test_assign_start_and_resolve_lifecycle(self) -> None:
         self.assertEqual(self.run_cli("assign", "task-001", "Enes")[0], 0)
