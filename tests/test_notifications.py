@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 
@@ -100,13 +101,7 @@ def test_new_escalation_level_creates_a_new_delivery(tmp_path) -> None:
 
 def test_on_time_and_resolved_tasks_are_not_notified(tmp_path) -> None:
     on_time = _overdue_task(overdue_hours=-1)
-    resolved = WarehouseTask(
-        **{
-            **on_time.__dict__,
-            "task_id": "resolved",
-            "status": TaskStatus.RESOLVED,
-        }
-    )
+    resolved = replace(on_time, task_id="resolved", status=TaskStatus.RESOLVED)
 
     with SQLiteTaskStore(tmp_path / "warehouse.db") as store:
         result = dispatch_escalation_notifications(
