@@ -7,10 +7,22 @@ import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from warehouse_ops.task_cli import main
 from warehouse_ops.task_store import SQLiteTaskStore
 from warehouse_ops.tasks import TaskStatus, WarehouseTask
+
+
+FIXED_NOW = datetime(2026, 7, 26, 17, 0, tzinfo=timezone.utc)
+
+
+class FixedDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return FIXED_NOW.replace(tzinfo=None)
+        return FIXED_NOW.astimezone(tz)
 
 
 class WarehouseTaskCliTests(unittest.TestCase):
@@ -39,7 +51,7 @@ class WarehouseTaskCliTests(unittest.TestCase):
 
     def run_cli(self, *arguments: str) -> tuple[int, str]:
         output = io.StringIO()
-        with redirect_stdout(output):
+        with patch("warehouse_ops.task_cli.datetime", FixedDateTime), redirect_stdout(output):
             exit_code = main(["--database", str(self.database), *arguments])
         return exit_code, output.getvalue()
 
@@ -104,7 +116,7 @@ class WarehouseTaskCliTests(unittest.TestCase):
         self.assertEqual(rows[0]["severity"], "HIGH")
         self.assertEqual(rows[0]["due_at"], "2026-07-26T12:00:00+00:00")
         self.assertEqual(rows[0]["is_overdue"], "yes")
-        self.assertGreater(float(rows[0]["overdue_hours"]), 4)
+        self.assertEqual(float(rows[0]["overdue_hours"]), 5.0)
         self.assertEqual(rows[0]["escalation_level"], "URGENT")
         self.assertEqual(rows[0]["escalation_owner"], "warehouse-manager")
         self.assertEqual(rows[0]["sku"], "TVS-001")
