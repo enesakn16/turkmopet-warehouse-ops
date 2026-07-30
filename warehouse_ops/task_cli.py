@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,6 +17,26 @@ from .tasks import (
     resolve_task,
     start_task,
 )
+
+
+class _SilentEscalationNotifier:
+    """Build console-compatible payloads without polluting JSON stdout."""
+
+    channel = "console"
+    dry_run = True
+
+    def send(
+        self,
+        task: WarehouseTask,
+        level: EscalationLevel,
+        *,
+        now: datetime,
+    ) -> str:
+        del now
+        return (
+            f"[{level.value}] task={task.task_id} owner={task.escalation_owner} "
+            f"severity={task.severity} sku={task.sku or '-'} message={task.issue_message}"
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,6 +71,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         required=True,
         help="Required safety flag; print notifications without recording delivery",
+    )
+    notify_parser.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="Preview output format (default: text)",
     )
 
     assign_parser = commands.add_parser("assign", help="Assign an open task")
@@ -204,6 +231,44 @@ def _write_tasks_csv(
             )
 
 
+def _print_notification_json(
+    tasks: tuple[WarehouseTask, ...],
+    *,
+    now: datetime,
+    delivered: tuple,
+    skipped_delivery_keys: tuple[str, ...],
+) -> None:
+    tasks_by_id = {task.task_id: task for task in tasks}
+    notifications = []
+    for delivery in delivered:
+        task = tasks_by_id[delivery.task_id]
+        notifications.append(
+            {
+                "task_id": delivery.task_id,
+                "escalation_level": delivery.escalation_level.value,
+                "escalation_owner": task.escalation_owner,
+                "severity": task.severity,
+                "sku": task.sku,
+                "message": task.issue_message,
+                "channel": delivery.channel,
+                "payload": delivery.payload,
+            }
+        )
+
+    document = {
+        "generated_at": now.isoformat(),
+        "dry_run": True,
+        "format_version": 1,
+        "summary": {
+            "active": len(delivered),
+            "previously_delivered": len(skipped_delivery_keys),
+        },
+        "notifications": notifications,
+        "skipped_delivery_keys": list(skipped_delivery_keys),
+    }
+    print(json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True))
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     database = Path(args.database)
@@ -232,17 +297,31 @@ def main(argv: list[str] | None = None) -> int:
 
             if args.command == "notify":
                 now = datetime.now(timezone.utc)
+                tasks = store.list_tasks()
+                notifier = (
+                    _SilentEscalationNotifier()
+                    if args.format == "json"
+                    else ConsoleEscalationNotifier(dry_run=True)
+                )
                 result = dispatch_escalation_notifications(
-                    store.list_tasks(),
+                    tasks,
                     store=store,
-                    notifier=ConsoleEscalationNotifier(dry_run=True),
+                    notifier=notifier,
                     now=now,
                 )
-                print(
-                    "NOTIFICATION PREVIEW: "
-                    f"{len(result.delivered)} active, "
-                    f"{len(result.skipped_delivery_keys)} previously delivered"
-                )
+                if args.format == "json":
+                    _print_notification_json(
+                        tasks,
+                        now=now,
+                        delivered=result.delivered,
+                        skipped_delivery_keys=result.skipped_delivery_keys,
+                    )
+                else:
+                    print(
+                        "NOTIFICATION PREVIEW: "
+                        f"{len(result.delivered)} active, "
+                        f"{len(result.skipped_delivery_keys)} previously delivered"
+                    )
                 return 0
 
             task = _require_task(store, args.task_id)
