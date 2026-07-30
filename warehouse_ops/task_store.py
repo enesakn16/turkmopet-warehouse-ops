@@ -5,7 +5,8 @@ from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
-from .tasks import TaskStatus, WarehouseTask
+from .notifications import NotificationDelivery
+from .tasks import EscalationLevel, TaskStatus, WarehouseTask
 
 
 class TaskStoreError(RuntimeError):
@@ -55,6 +56,25 @@ class SQLiteTaskStore:
             )
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_warehouse_tasks_assignee ON warehouse_tasks(assignee)"
+            )
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS escalation_deliveries (
+                    task_id TEXT NOT NULL,
+                    escalation_level TEXT NOT NULL
+                        CHECK (escalation_level IN ('WATCH', 'URGENT', 'CRITICAL')),
+                    channel TEXT NOT NULL,
+                    delivered_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    PRIMARY KEY (task_id, escalation_level, channel)
+                )
+                """
+            )
+            self._connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_escalation_deliveries_delivered_at
+                ON escalation_deliveries(delivered_at)
+                """
             )
 
     def save(self, task: WarehouseTask) -> None:
@@ -135,6 +155,66 @@ class SQLiteTaskStore:
 
         rows = self._connection.execute(query, parameters).fetchall()
         return tuple(self._deserialize(row) for row in rows)
+
+    def has_delivery(
+        self,
+        task_id: str,
+        escalation_level: EscalationLevel,
+        channel: str,
+    ) -> bool:
+        row = self._connection.execute(
+            """
+            SELECT 1 FROM escalation_deliveries
+            WHERE task_id = ? AND escalation_level = ? AND channel = ?
+            """,
+            (task_id, escalation_level.value, channel),
+        ).fetchone()
+        return row is not None
+
+    def record_delivery(self, delivery: NotificationDelivery) -> None:
+        """Persist a successful delivery once for its task, level and channel."""
+
+        try:
+            with self._connection:
+                self._connection.execute(
+                    """
+                    INSERT INTO escalation_deliveries (
+                        task_id, escalation_level, channel, delivered_at, payload
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        delivery.task_id,
+                        delivery.escalation_level.value,
+                        delivery.channel,
+                        delivery.delivered_at.isoformat(),
+                        delivery.payload,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise TaskStoreError(
+                "Escalation delivery already exists or contains invalid data."
+            ) from exc
+
+    def list_deliveries(self) -> tuple[NotificationDelivery, ...]:
+        rows = self._connection.execute(
+            """
+            SELECT * FROM escalation_deliveries
+            ORDER BY delivered_at ASC, task_id ASC
+            """
+        ).fetchall()
+        try:
+            return tuple(
+                NotificationDelivery(
+                    task_id=row["task_id"],
+                    escalation_level=EscalationLevel(row["escalation_level"]),
+                    channel=row["channel"],
+                    delivered_at=datetime.fromisoformat(row["delivered_at"]),
+                    payload=row["payload"],
+                )
+                for row in rows
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise TaskStoreError("Stored escalation delivery data is invalid.") from exc
 
     @staticmethod
     def _serialize(task: WarehouseTask) -> tuple[object, ...]:
