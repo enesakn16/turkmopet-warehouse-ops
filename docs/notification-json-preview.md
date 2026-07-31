@@ -12,6 +12,23 @@ warehouse-tasks \
 
 The command writes one valid JSON document to standard output. It does not contact an external service and does not create an escalation delivery record.
 
+## Atomic file publishing
+
+Scheduled jobs should publish the snapshot directly instead of relying on shell redirection:
+
+```bash
+warehouse-tasks \
+  --database warehouse-tasks.db \
+  notify \
+  --dry-run \
+  --format json \
+  --output reports/escalations.json
+```
+
+The destination directory is created when necessary. The command writes and flushes a temporary file in the destination directory, calls `fsync`, and then replaces the destination with `os.replace`. Readers therefore see either the previous complete snapshot or the new complete snapshot, never a partially written JSON document.
+
+`--output` is accepted only with `--format json`. Successful file publishing produces no standard-output text, which keeps scheduled job output clean. Temporary files are removed if publishing fails.
+
 ## Contract
 
 ```json
