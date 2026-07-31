@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -77,6 +79,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("text", "json"),
         default="text",
         help="Preview output format (default: text)",
+    )
+    notify_parser.add_argument(
+        "--output",
+        help="Atomically replace this file with the JSON preview; requires --format json",
     )
 
     assign_parser = commands.add_parser("assign", help="Assign an open task")
@@ -231,13 +237,13 @@ def _write_tasks_csv(
             )
 
 
-def _print_notification_json(
+def _render_notification_json(
     tasks: tuple[WarehouseTask, ...],
     *,
     now: datetime,
     delivered: tuple,
     skipped_delivery_keys: tuple[str, ...],
-) -> None:
+) -> str:
     tasks_by_id = {task.task_id: task for task in tasks}
     notifications = []
     for delivery in delivered:
@@ -266,7 +272,31 @@ def _print_notification_json(
         "notifications": notifications,
         "skipped_delivery_keys": list(skipped_delivery_keys),
     }
-    print(json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True))
+    return json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
+def _write_text_atomically(output: Path, content: str) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            dir=output.parent,
+            prefix=f".{output.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary_path = Path(handle.name)
+        os.replace(temporary_path, output)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -296,6 +326,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
 
             if args.command == "notify":
+                if args.output and args.format != "json":
+                    raise ValueError("--output requires --format json")
                 now = datetime.now(timezone.utc)
                 tasks = store.list_tasks()
                 notifier = (
@@ -310,12 +342,16 @@ def main(argv: list[str] | None = None) -> int:
                     now=now,
                 )
                 if args.format == "json":
-                    _print_notification_json(
+                    document = _render_notification_json(
                         tasks,
                         now=now,
                         delivered=result.delivered,
                         skipped_delivery_keys=result.skipped_delivery_keys,
                     )
+                    if args.output:
+                        _write_text_atomically(Path(args.output), document)
+                    else:
+                        print(document, end="")
                 else:
                     print(
                         "NOTIFICATION PREVIEW: "
