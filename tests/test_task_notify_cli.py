@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -69,6 +70,56 @@ class WarehouseTaskNotifyCliTests(unittest.TestCase):
             deliveries = store.list_deliveries()
 
         self.assertEqual(deliveries, ())
+
+    def test_json_output_file_is_valid_and_stdout_stays_empty(self) -> None:
+        output_path = Path(self.temp_dir.name) / "reports" / "escalations.json"
+
+        exit_code, output = self.run_cli(
+            "notify",
+            "--dry-run",
+            "--format",
+            "json",
+            "--output",
+            str(output_path),
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output, "")
+        document = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(document["format_version"], 1)
+        self.assertEqual(document["summary"], {"active": 1, "previously_delivered": 0})
+        self.assertEqual(document["notifications"][0]["task_id"], "task-urgent")
+
+    def test_json_output_atomically_replaces_existing_snapshot(self) -> None:
+        output_path = Path(self.temp_dir.name) / "escalations.json"
+        output_path.write_text("stale-data", encoding="utf-8")
+
+        exit_code, _ = self.run_cli(
+            "notify",
+            "--dry-run",
+            "--format",
+            "json",
+            "--output",
+            str(output_path),
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(output_path.read_text(encoding="utf-8"))["dry_run"], True)
+        self.assertEqual(list(output_path.parent.glob(f".{output_path.name}.*.tmp")), [])
+
+    def test_output_requires_json_format(self) -> None:
+        output_path = Path(self.temp_dir.name) / "escalations.json"
+
+        exit_code, output = self.run_cli(
+            "notify",
+            "--dry-run",
+            "--output",
+            str(output_path),
+        )
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("--output requires --format json", output)
+        self.assertFalse(output_path.exists())
 
 
 if __name__ == "__main__":
