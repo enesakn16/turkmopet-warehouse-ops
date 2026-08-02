@@ -13,7 +13,8 @@ from .io import (
     write_movement_quarantine_csv,
     write_report_json,
 )
-from .reconciliation import reconcile_stock
+from .quarantine import quarantine_rows_to_issues
+from .reconciliation import ReconciliationReport, reconcile_stock
 from .service import sync_reconciliation_tasks
 from .task_store import SQLiteTaskStore
 
@@ -56,8 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--task-database",
         help=(
-            "Optional SQLite database path. When provided, reconciliation issues "
-            "are synchronized into persistent warehouse tasks."
+            "Optional SQLite database path. When provided, reconciliation and "
+            "quarantine issues are synchronized into persistent warehouse tasks."
         ),
     )
     return parser
@@ -66,15 +67,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    quarantined_count = 0
+    quarantined_rows = ()
     try:
         opening_stock = read_stock_csv(args.opening)
         if args.movement_quarantine_output:
             movement_import = read_movements_csv_with_quarantine(args.movements)
             movements = movement_import.movements
-            quarantined_count = len(movement_import.quarantined_rows)
+            quarantined_rows = movement_import.quarantined_rows
             write_movement_quarantine_csv(
-                movement_import.quarantined_rows,
+                quarantined_rows,
                 args.movement_quarantine_output,
             )
         else:
@@ -93,6 +94,13 @@ def main(argv: list[str] | None = None) -> int:
         counted_stock,
         product_metadata,
     )
+    quarantine_issues = quarantine_rows_to_issues(quarantined_rows)
+    if quarantine_issues:
+        report = ReconciliationReport(
+            lines=report.lines,
+            issues=report.issues + quarantine_issues,
+        )
+
     output_path = write_report_json(report, args.output)
 
     if args.issues_output:
@@ -110,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     quarantine_summary = ""
     if args.movement_quarantine_output:
         quarantine_summary = (
-            f" Quarantine: {quarantined_count} rows -> "
+            f" Quarantine: {len(quarantined_rows)} rows -> "
             f"{Path(args.movement_quarantine_output)}."
         )
 
@@ -119,8 +127,6 @@ def main(argv: list[str] | None = None) -> int:
         f"{status}: {len(report.lines)} SKUs, {len(report.issues)} issues. "
         f"Report: {Path(output_path)}.{task_summary}{quarantine_summary}"
     )
-    if quarantined_count:
-        return 1
     return 0 if report.is_balanced else 1
 
 
