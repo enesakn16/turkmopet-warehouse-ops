@@ -1,5 +1,267 @@
 # Türkmopet Warehouse Ops
 
-Operational tooling for warehouse stock movements, reconciliation and exception reporting.
+Türkmopet depo hareketlerini doğrulayan, fiziksel sayım farklarını önceliklendiren ve bulunan sorunları atanabilir görevlere dönüştüren Python araçları.
 
-> The first implementation is being developed on a feature branch and reviewed through a draft pull request.
+## Özellikler
+
+- Açılış stokları, hareketler, fiziksel sayım ve ürün konumu CSV dosyalarını okur.
+- Mükerrer hareket, bilinmeyen SKU, geçersiz miktar, negatif stok, sayım farkı ve kritik stok sorunlarını yakalar.
+- Sorunları `CRITICAL`, `HIGH`, `MEDIUM` ve `LOW` olarak sıralar.
+- JSON raporu ve Excel uyumlu sorun CSV'si üretir.
+- Aynı sorunu tekrar görevleştirmeden çalışan/ekip ataması ve çözüm geçmişi oluşturur.
+- Görevleri SQLite üzerinde kalıcı saklar.
+- Mutabakat sırasında yeni sorunları tek komutla SQLite görevlerine senkronize eder.
+- Görev listeleme, filtreli CSV dışa aktarma, atama, başlatma ve çözme işlemlerini komut satırından yönetir.
+- Önem seviyesine göre SLA son tarihi hesaplar ve gecikmiş açık görevleri ayrı filtreler.
+- Gecikme süresini `WATCH`, `URGENT` ve `CRITICAL` eskalasyon seviyelerine dönüştürür.
+- Eskalasyon sorumluluğunu görev önemine göre depo yöneticisi veya operasyon sorumlusuna yönlendirir.
+
+## Kurulum
+
+```bash
+python -m pip install -e .
+```
+
+## CSV şemaları
+
+`opening.csv` ve opsiyonel `counted.csv`:
+
+```csv
+sku,quantity
+TVS-JUPITER-FILTRE,10
+```
+
+`movements.csv`:
+
+```csv
+event_id,sku,movement_type,quantity
+evt-1001,TVS-JUPITER-FILTRE,RECEIPT,5
+```
+
+Desteklenen hareket tipleri: `RECEIPT`, `SALE`, `RETURN`, `TRANSFER_OUT`, `ADJUSTMENT`.
+
+Opsiyonel `metadata.csv`:
+
+```csv
+sku,floor,shelf,critical_stock
+TVS-JUPITER-FILTRE,Zemin,A-12,5
+```
+
+## Stok mutabakatı ve görev senkronizasyonu
+
+Yalnızca rapor üretmek için:
+
+```bash
+warehouse-reconcile \
+  --opening opening.csv \
+  --movements movements.csv \
+  --counted counted.csv \
+  --metadata metadata.csv \
+  --output reports/reconciliation.json \
+  --issues-output reports/issues.csv
+```
+
+Bulunan sorunları aynı çalışmada kalıcı görevlere dönüştürmek için `--task-database` eklenir:
+
+```bash
+warehouse-reconcile \
+  --opening opening.csv \
+  --movements movements.csv \
+  --counted counted.csv \
+  --metadata metadata.csv \
+  --output reports/reconciliation.json \
+  --issues-output reports/issues.csv \
+  --task-database warehouse.db
+```
+
+Komut, yeni ve daha önce var olan görev sayılarını özetler. Aynı mutabakat tekrar çalıştırıldığında mevcut görevin ataması, durumu ve çözüm geçmişi korunur; mükerrer görev oluşturulmaz.
+
+Çıkış kodları:
+
+- `0`: stok dengeli
+- `1`: inceleme gereken sorun var
+- `2`: dosya veya şema hatası
+
+Sorun CSV kolonları:
+
+```text
+severity,code,message,sku,event_id,location
+```
+
+## Görev yönetimi komutu
+
+Varsayılan veritabanı `warehouse-tasks.db` dosyasıdır. Farklı bir dosya kullanmak için her komuta `--database <dosya>` eklenir.
+
+Görevleri listele:
+
+```bash
+warehouse-tasks --database warehouse.db list
+warehouse-tasks --database warehouse.db list --status OPEN
+warehouse-tasks --database warehouse.db list --assignee Enes
+warehouse-tasks --database warehouse.db list --overdue
+warehouse-tasks --database warehouse.db list --escalated
+warehouse-tasks --database warehouse.db list --escalation-level URGENT
+```
+
+Görev kuyruğunu Excel uyumlu CSV olarak dışa aktar:
+
+```bash
+warehouse-tasks --database warehouse.db export reports/open-tasks.csv --status OPEN
+warehouse-tasks --database warehouse.db export reports/enes-tasks.csv --assignee Enes
+warehouse-tasks --database warehouse.db export reports/overdue.csv --overdue
+warehouse-tasks --database warehouse.db export reports/escalated.csv --escalated
+warehouse-tasks --database warehouse.db export reports/critical-escalations.csv \
+  --escalation-level CRITICAL
+warehouse-tasks --database warehouse.db export reports/resolved.csv \
+  --status RESOLVED \
+  --assignee Enes
+```
+
+Dışa aktarılan kolonlar:
+
+```text
+task_id,status,severity,due_at,is_overdue,overdue_hours,escalation_level,escalation_owner,issue_code,issue_message,sku,event_id,location,assignee,created_at,updated_at,resolution_note
+```
+
+Çıktı UTF-8 BOM ile yazılır; Excel tarafından doğrudan açılabilir. Filtre sonucu boş olsa bile başlık satırı üretilir ve raporlama otomasyonları bozulmaz.
+
+Göreve çalışan ata:
+
+```bash
+warehouse-tasks --database warehouse.db assign <task_id> Enes
+```
+
+Görevi başlat:
+
+```bash
+warehouse-tasks --database warehouse.db start <task_id>
+```
+
+Görevi çözüm notuyla kapat:
+
+```bash
+warehouse-tasks --database warehouse.db resolve <task_id> \
+  --note "Raf yeniden sayıldı ve stok düzeltildi."
+```
+
+Görev işlemlerinde başarı kodu `0`, bulunamayan görev veya geçersiz durum geçişinde hata kodu `2` döner.
+
+## SLA ve gecikme kuralları
+
+Görev son tarihi `created_at` ve önem seviyesinden otomatik hesaplanır:
+
+| Önem | SLA |
+|---|---:|
+| `CRITICAL` | 2 saat |
+| `HIGH` | 24 saat |
+| `MEDIUM` | 48 saat |
+| `LOW` | 120 saat |
+
+Kurallar:
+
+- Son tarih ayrı bir veritabanı alanı olarak saklanmaz; görev oluşturma zamanı ve SLA kuralından deterministik hesaplanır.
+- Son tarih tam olarak geldiğinde görev gecikmiş sayılmaz; süre aşıldığında gecikmiş olur.
+- `RESOLVED` görevler son tarih geçmiş olsa bile gecikmiş sayılmaz.
+- `--overdue` filtresi yalnızca çözülmemiş ve SLA süresi aşılmış görevleri getirir.
+- Python API'sinde SLA tablosu `SLA_BY_SEVERITY` üzerinden okunabilir.
+
+## Eskalasyon kuralları
+
+Eskalasyon yalnızca çözülmemiş ve SLA süresi aşılmış görevler için hesaplanır:
+
+| Gecikme | Seviye |
+|---|---|
+| 0–4 saat | `WATCH` |
+| 4–24 saat | `URGENT` |
+| 24 saatten fazla | `CRITICAL` |
+
+Sorumluluk eşlemesi:
+
+| Görev önemi | Eskalasyon sahibi |
+|---|---|
+| `CRITICAL`, `HIGH` | `warehouse-manager` |
+| `MEDIUM`, `LOW` | `operations-supervisor` |
+
+Kurallar yan etki üretmez; çekirdek katman e-posta, Slack veya telefon bildirimi göndermez. Böylece `overdue_hours`, `escalation_level` ve `escalation_owner` değerleri bağımsız test edilebilir ve daha sonra farklı bildirim kanallarına bağlanabilir.
+
+## Görev yaşam döngüsü
+
+```python
+from warehouse_ops import assign_task, create_tasks, resolve_task, start_task
+
+tasks = create_tasks(report)
+task = assign_task(tasks[0], "Enes")
+task = start_task(task)
+task = resolve_task(task, "Raf tekrar sayıldı ve stok düzeltildi.")
+```
+
+Akış:
+
+```text
+OPEN -> IN_PROGRESS -> RESOLVED
+```
+
+Kurallar:
+
+- Atanmamış görev başlatılamaz.
+- Sadece açık görev başlatılabilir.
+- Sadece devam eden görev çözülebilir.
+- Çözüm notu zorunludur.
+- Çözülmüş görev yeniden atanamaz.
+- Aynı mutabakat sorunu ikinci bir görev üretmez.
+
+## Python API
+
+```python
+from warehouse_ops import Movement, MovementType, ProductMetadata, reconcile_stock
+
+report = reconcile_stock(
+    opening_stock={"TVS-JUPITER-FILTRE": 10},
+    movements=[Movement("evt-1001", "TVS-JUPITER-FILTRE", MovementType.RECEIPT, 5)],
+    counted_stock={"TVS-JUPITER-FILTRE": 15},
+    product_metadata={
+        "TVS-JUPITER-FILTRE": ProductMetadata(floor="Zemin", shelf="A-12", critical_stock=5)
+    },
+)
+```
+
+## Geliştirme
+
+```bash
+python -m unittest discover -s tests -v
+python -m compileall -q warehouse_ops tests
+```
+
+CI, Python 3.11, 3.12 ve 3.13 üzerinde çalışır.
+
+## Proje yapısı
+
+```text
+warehouse_ops/
+  cli.py
+  io.py
+  reconciliation.py
+  service.py
+  task_cli.py
+  task_store.py
+  tasks.py
+tests/
+  test_cli.py
+  test_io.py
+  test_reconciliation.py
+  test_service.py
+  test_task_cli.py
+  test_task_store.py
+  test_tasks.py
+```
+
+## Yol haritası
+
+1. Shopify, İkas ve Sentos adaptörleri
+2. Satır bazlı hata karantinası
+3. Eskalasyon kuyruğunu bildirim adaptörlerine bağlama
+4. Basit web paneli
+
+## Geliştirme notu
+
+Bu proje yapay zekâ destekli geliştirme araçlarından yararlanılarak geliştirilmektedir. Mimari kararlar, iş kuralları, doğrulama ve yayın sorumluluğu proje sahibine aittir.
