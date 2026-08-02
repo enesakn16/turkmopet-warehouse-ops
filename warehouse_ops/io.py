@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
 
@@ -16,6 +16,29 @@ from .reconciliation import (
 
 class CsvFormatError(ValueError):
     """Raised when an imported warehouse CSV is missing or contains invalid data."""
+
+
+@dataclass(frozen=True, slots=True)
+class QuarantinedMovementRow:
+    """A movement row excluded from reconciliation with its original values."""
+
+    row_number: int
+    reason: str
+    event_id: str
+    sku: str
+    movement_type: str
+    quantity: str
+
+
+@dataclass(frozen=True, slots=True)
+class MovementImportResult:
+    """Valid movements and rows that could not be safely imported."""
+
+    movements: tuple[Movement, ...]
+    quarantined_rows: tuple[QuarantinedMovementRow, ...]
+
+
+MOVEMENT_COLUMNS = {"event_id", "sku", "movement_type", "quantity"}
 
 
 def _read_rows(path: str | Path, required_columns: set[str]) -> list[dict[str, str]]:
@@ -99,36 +122,104 @@ def read_product_metadata_csv(path: str | Path) -> dict[str, ProductMetadata]:
     return metadata
 
 
-def read_movements_csv(path: str | Path) -> tuple[Movement, ...]:
-    """Read movement rows from CSV.
+def _movement_from_row(
+    row: dict[str, str], *, path: str | Path, row_number: int
+) -> Movement:
+    event_id = row["event_id"]
+    sku = row["sku"]
+    if not event_id:
+        raise CsvFormatError(f"{path}: row {row_number} has an empty event_id")
+    if not sku:
+        raise CsvFormatError(f"{path}: row {row_number} has an empty SKU")
 
-    Required columns are ``event_id,sku,movement_type,quantity``. Movement type
-    values must match :class:`MovementType`, for example ``RECEIPT`` or ``SALE``.
+    try:
+        movement_type = MovementType(row["movement_type"].upper())
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in MovementType)
+        raise CsvFormatError(
+            f"{path}: row {row_number} has invalid movement_type "
+            f"{row['movement_type']!r}; expected one of: {allowed}"
+        ) from exc
+
+    return Movement(
+        event_id=event_id,
+        sku=sku,
+        movement_type=movement_type,
+        quantity=_parse_quantity(row["quantity"], path=path, row_number=row_number),
+    )
+
+
+def read_movements_csv(path: str | Path) -> tuple[Movement, ...]:
+    """Read movement rows strictly and fail on the first invalid row."""
+
+    rows = _read_rows(path, MOVEMENT_COLUMNS)
+    return tuple(
+        _movement_from_row(row, path=path, row_number=row_number)
+        for row_number, row in enumerate(rows, start=2)
+    )
+
+
+def read_movements_csv_with_quarantine(path: str | Path) -> MovementImportResult:
+    """Import valid movement rows while isolating invalid rows for review.
+
+    File-level errors such as missing headers still fail the import because no row can
+    be interpreted safely. Row-level validation errors are captured without allowing
+    the invalid movement to affect stock calculations.
     """
 
-    rows = _read_rows(path, {"event_id", "sku", "movement_type", "quantity"})
+    rows = _read_rows(path, MOVEMENT_COLUMNS)
     movements: list[Movement] = []
+    quarantined: list[QuarantinedMovementRow] = []
+    seen_event_ids: set[str] = set()
+
     for row_number, row in enumerate(rows, start=2):
         try:
-            movement_type = MovementType(row["movement_type"].upper())
-        except ValueError as exc:
-            allowed = ", ".join(item.value for item in MovementType)
-            raise CsvFormatError(
-                f"{path}: row {row_number} has invalid movement_type "
-                f"{row['movement_type']!r}; expected one of: {allowed}"
-            ) from exc
-
-        movements.append(
-            Movement(
-                event_id=row["event_id"],
-                sku=row["sku"],
-                movement_type=movement_type,
-                quantity=_parse_quantity(
-                    row["quantity"], path=path, row_number=row_number
-                ),
+            movement = _movement_from_row(row, path=path, row_number=row_number)
+            event_key = movement.event_id.casefold()
+            if event_key in seen_event_ids:
+                raise CsvFormatError(
+                    f"{path}: row {row_number} duplicates event_id {movement.event_id!r}"
+                )
+            seen_event_ids.add(event_key)
+            movements.append(movement)
+        except CsvFormatError as exc:
+            quarantined.append(
+                QuarantinedMovementRow(
+                    row_number=row_number,
+                    reason=str(exc),
+                    event_id=row.get("event_id", ""),
+                    sku=row.get("sku", ""),
+                    movement_type=row.get("movement_type", ""),
+                    quantity=row.get("quantity", ""),
+                )
             )
+
+    return MovementImportResult(tuple(movements), tuple(quarantined))
+
+
+def write_movement_quarantine_csv(
+    rows: Iterable[QuarantinedMovementRow], path: str | Path
+) -> Path:
+    """Write excluded movement rows to an Excel-compatible audit file."""
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "row_number",
+                "reason",
+                "event_id",
+                "sku",
+                "movement_type",
+                "quantity",
+            ],
         )
-    return tuple(movements)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(asdict(row))
+    return output_path
 
 
 def report_to_dict(report: ReconciliationReport) -> dict[str, object]:

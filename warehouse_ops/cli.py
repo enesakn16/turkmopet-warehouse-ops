@@ -6,9 +6,11 @@ from pathlib import Path
 from .io import (
     CsvFormatError,
     read_movements_csv,
+    read_movements_csv_with_quarantine,
     read_product_metadata_csv,
     read_stock_csv,
     write_issues_csv,
+    write_movement_quarantine_csv,
     write_report_json,
 )
 from .reconciliation import reconcile_stock
@@ -45,6 +47,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional CSV path for prioritized issues requiring operational review",
     )
     parser.add_argument(
+        "--movement-quarantine-output",
+        help=(
+            "Optional CSV path for invalid movement rows. When provided, valid rows "
+            "continue to reconciliation while invalid rows are excluded and recorded."
+        ),
+    )
+    parser.add_argument(
         "--task-database",
         help=(
             "Optional SQLite database path. When provided, reconciliation issues "
@@ -57,9 +66,19 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
+    quarantined_count = 0
     try:
         opening_stock = read_stock_csv(args.opening)
-        movements = read_movements_csv(args.movements)
+        if args.movement_quarantine_output:
+            movement_import = read_movements_csv_with_quarantine(args.movements)
+            movements = movement_import.movements
+            quarantined_count = len(movement_import.quarantined_rows)
+            write_movement_quarantine_csv(
+                movement_import.quarantined_rows,
+                args.movement_quarantine_output,
+            )
+        else:
+            movements = read_movements_csv(args.movements)
         counted_stock = read_stock_csv(args.counted) if args.counted else None
         product_metadata = (
             read_product_metadata_csv(args.metadata) if args.metadata else None
@@ -88,11 +107,20 @@ def main(argv: list[str] | None = None) -> int:
             f"{task_result.existing_count} existing."
         )
 
+    quarantine_summary = ""
+    if args.movement_quarantine_output:
+        quarantine_summary = (
+            f" Quarantine: {quarantined_count} rows -> "
+            f"{Path(args.movement_quarantine_output)}."
+        )
+
     status = "BALANCED" if report.is_balanced else "REVIEW_REQUIRED"
     print(
         f"{status}: {len(report.lines)} SKUs, {len(report.issues)} issues. "
-        f"Report: {Path(output_path)}.{task_summary}"
+        f"Report: {Path(output_path)}.{task_summary}{quarantine_summary}"
     )
+    if quarantined_count:
+        return 1
     return 0 if report.is_balanced else 1
 
 
