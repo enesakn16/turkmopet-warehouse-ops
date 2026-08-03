@@ -14,9 +14,6 @@ class RoutingConfigTests(unittest.TestCase):
             severity=IssueSeverity.HIGH,
             sku="SKU-1",
             location=None,
-            expected_quantity=None,
-            counted_quantity=None,
-            variance=None,
         )
 
     def _config(self, content: str) -> Path:
