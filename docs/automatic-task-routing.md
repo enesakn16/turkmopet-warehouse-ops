@@ -1,8 +1,8 @@
 # Otomatik görev yönlendirme
 
-`warehouse-reconcile` komutu `--task-database` ile çalıştırıldığında yeni görevler artık sorumlu kuyruğa otomatik atanır.
+`warehouse-reconcile` komutu `--task-database` ile çalıştırıldığında yeni görevler sorumlu kuyruğa otomatik atanır.
 
-## Yönlendirme kuralları
+## Varsayılan kurallar
 
 | Sorun türü | Atanan kuyruk |
 |---|---|
@@ -11,6 +11,30 @@
 | Eşleşmeyen yeni sorun kodları | `operations-supervisor` |
 
 `QUARANTINED_MOVEMENT_ROW` kayıtlarında doğrulama nedeni ayrıca incelenir. `event_id`, `event id` veya `duplicate` içeren nedenler entegrasyon ekibine; diğer karantina nedenleri depo operasyonuna atanır.
+
+## Kuralları CSV ile değiştirme
+
+Ekip veya çalışan adlarını kod değiştirmeden yönetmek için `--routing-config` kullanılır:
+
+```bash
+warehouse-reconcile \
+  --opening opening.csv \
+  --movements movements.csv \
+  --counted counted.csv \
+  --output reports/reconciliation.json \
+  --task-database warehouse.db \
+  --routing-config examples/task-routing.csv
+```
+
+CSV kolonları:
+
+- `issue_code`: Sorun kodu. `*` güvenli varsayılan kuyruğu belirler.
+- `assignee`: Atanacak çalışan veya ekip kuyruğu.
+- `message_contains`: İsteğe bağlı, büyük-küçük harfe duyarsız mesaj filtresi.
+
+Kurallar dosya sırasıyla değerlendirilir; ilk eşleşme kazanır. Bu nedenle mesaj filtresi olan özel kurallar, aynı sorun kodunun genel kuralından önce yazılmalıdır.
+
+Eksik kolon, boş değer veya aynı sorun kodu + mesaj filtresinin tekrarı güvenli biçimde reddedilir. `--routing-config`, görev veritabanı olmadan kullanılamaz.
 
 ## Güvenli tekrar çalıştırma
 
