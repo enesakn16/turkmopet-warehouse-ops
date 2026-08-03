@@ -1,0 +1,11 @@
+issue_code,assignee,message_contains
+DUPLICATE_EVENT,integration-team,
+MISSING_EVENT_ID,integration-team,
+QUARANTINED_MOVEMENT_ROW,integration-team,event_id
+QUARANTINED_MOVEMENT_ROW,integration-team,event id
+QUARANTINED_MOVEMENT_ROW,integration-team,duplicate
+QUARANTINED_MOVEMENT_ROW,warehouse-operations,
+STOCK_VARIANCE,warehouse-operations,
+CRITICAL_STOCK,warehouse-operations,
+UNKNOWN_SKU,warehouse-operations,
+*,operations-supervisor,
