@@ -23,10 +23,10 @@ class TaskSynchronizationTests(unittest.TestCase):
         return ReconciliationReport(lines=(), issues=issues)
 
     @staticmethod
-    def _issue(code: str, sku: str) -> ReconciliationIssue:
+    def _issue(code: str, sku: str, message: str | None = None) -> ReconciliationIssue:
         return ReconciliationIssue(
             code=code,
-            message=f"Warehouse issue for {sku}.",
+            message=message or f"Warehouse issue for {sku}.",
             severity=IssueSeverity.HIGH,
             sku=sku,
             location="Zemin / A-01",
@@ -48,6 +48,64 @@ class TaskSynchronizationTests(unittest.TestCase):
                 self.assertEqual(0, result.existing_count)
                 self.assertEqual(2, result.total_count)
                 self.assertEqual(2, len(store.list_tasks()))
+                self.assertTrue(
+                    all(task.assignee == "warehouse-operations" for task in result.created_tasks)
+                )
+
+    def test_routes_event_identity_errors_to_integration_team(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskStore(Path(directory) / "warehouse.db") as store:
+                result = sync_reconciliation_tasks(
+                    self._report(
+                        self._issue("DUPLICATE_EVENT", "TVS-001"),
+                        self._issue("MISSING_EVENT_ID", "HONDA-002"),
+                    ),
+                    store,
+                    now=NOW,
+                )
+
+                self.assertEqual(
+                    {"integration-team"},
+                    {task.assignee for task in result.created_tasks},
+                )
+
+    def test_routes_quarantine_rows_by_validation_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskStore(Path(directory) / "warehouse.db") as store:
+                result = sync_reconciliation_tasks(
+                    self._report(
+                        self._issue(
+                            "QUARANTINED_MOVEMENT_ROW",
+                            "TVS-001",
+                            "Movement CSV row 2 was excluded: duplicate event_id",
+                        ),
+                        self._issue(
+                            "QUARANTINED_MOVEMENT_ROW",
+                            "HONDA-002",
+                            "Movement CSV row 3 was excluded: invalid quantity",
+                        ),
+                    ),
+                    store,
+                    now=NOW,
+                )
+
+                assignments = {
+                    task.sku: task.assignee
+                    for task in result.created_tasks
+                }
+                self.assertEqual("integration-team", assignments["TVS-001"])
+                self.assertEqual("warehouse-operations", assignments["HONDA-002"])
+
+    def test_routes_unknown_issue_to_operations_supervisor(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskStore(Path(directory) / "warehouse.db") as store:
+                result = sync_reconciliation_tasks(
+                    self._report(self._issue("UNMAPPED_ISSUE", "TVS-001")),
+                    store,
+                    now=NOW,
+                )
+
+                self.assertEqual("operations-supervisor", result.created_tasks[0].assignee)
 
     def test_repeated_sync_does_not_duplicate_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -92,6 +150,7 @@ class TaskSynchronizationTests(unittest.TestCase):
 
                 self.assertEqual(1, result.created_count)
                 self.assertEqual("CRITICAL_STOCK", result.created_tasks[0].issue_code)
+                self.assertEqual("warehouse-operations", result.created_tasks[0].assignee)
                 self.assertEqual(2, result.total_count)
                 self.assertEqual(2, len(store.list_tasks()))
 
