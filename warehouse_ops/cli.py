@@ -15,6 +15,7 @@ from .io import (
 )
 from .quarantine import quarantine_rows_to_issues
 from .reconciliation import ReconciliationReport, reconcile_stock
+from .routing import RoutingConfigError, RoutingRules
 from .service import sync_reconciliation_tasks
 from .task_store import SQLiteTaskStore
 
@@ -30,10 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="CSV with event_id,sku,movement_type,quantity columns",
     )
-    parser.add_argument(
-        "--counted",
-        help="Optional physical count CSV with sku,quantity columns",
-    )
+    parser.add_argument("--counted", help="Optional physical count CSV with sku,quantity columns")
     parser.add_argument(
         "--metadata",
         help="Optional CSV with sku,floor,shelf,critical_stock columns",
@@ -61,11 +59,28 @@ def build_parser() -> argparse.ArgumentParser:
             "quarantine issues are synchronized into persistent warehouse tasks."
         ),
     )
+    parser.add_argument(
+        "--routing-config",
+        help=(
+            "Optional CSV with issue_code,assignee,message_contains rules. "
+            "Used only when --task-database is provided."
+        ),
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.routing_config and not args.task_database:
+        print("Import failed: --routing-config requires --task-database.")
+        return 2
+
+    try:
+        routing_rules = RoutingRules.from_csv(args.routing_config) if args.routing_config else None
+    except RoutingConfigError as exc:
+        print(f"Import failed: {exc}")
+        return 2
 
     quarantined_rows = ()
     try:
@@ -74,26 +89,16 @@ def main(argv: list[str] | None = None) -> int:
             movement_import = read_movements_csv_with_quarantine(args.movements)
             movements = movement_import.movements
             quarantined_rows = movement_import.quarantined_rows
-            write_movement_quarantine_csv(
-                quarantined_rows,
-                args.movement_quarantine_output,
-            )
+            write_movement_quarantine_csv(quarantined_rows, args.movement_quarantine_output)
         else:
             movements = read_movements_csv(args.movements)
         counted_stock = read_stock_csv(args.counted) if args.counted else None
-        product_metadata = (
-            read_product_metadata_csv(args.metadata) if args.metadata else None
-        )
+        product_metadata = read_product_metadata_csv(args.metadata) if args.metadata else None
     except CsvFormatError as exc:
         print(f"Import failed: {exc}")
         return 2
 
-    report = reconcile_stock(
-        opening_stock,
-        movements,
-        counted_stock,
-        product_metadata,
-    )
+    report = reconcile_stock(opening_stock, movements, counted_stock, product_metadata)
     quarantine_issues = quarantine_rows_to_issues(quarantined_rows)
     if quarantine_issues:
         report = ReconciliationReport(
@@ -109,7 +114,11 @@ def main(argv: list[str] | None = None) -> int:
     task_summary = ""
     if args.task_database:
         with SQLiteTaskStore(args.task_database) as store:
-            task_result = sync_reconciliation_tasks(report, store)
+            task_result = sync_reconciliation_tasks(
+                report,
+                store,
+                routing_rules=routing_rules,
+            )
         task_summary = (
             f" Tasks: {task_result.created_count} created, "
             f"{task_result.existing_count} existing."
