@@ -48,6 +48,25 @@ class ReconciliationCliTests(unittest.TestCase):
             )
         return exit_code, output.getvalue()
 
+    def _run_with_quarantine(self, *extra_args: str) -> tuple[int, str, Path]:
+        quarantine = self.root / "quarantine.csv"
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = main(
+                [
+                    "--opening",
+                    str(self.opening),
+                    "--movements",
+                    str(self.movements),
+                    "--output",
+                    str(self.report),
+                    "--movement-quarantine-output",
+                    str(quarantine),
+                    *extra_args,
+                ]
+            )
+        return exit_code, output.getvalue(), quarantine
+
     def test_synchronizes_reconciliation_issues_into_sqlite(self) -> None:
         exit_code, output = self._run()
 
@@ -65,6 +84,79 @@ class ReconciliationCliTests(unittest.TestCase):
         self.assertIn("0 created, 1 existing", output)
         with SQLiteTaskStore(self.database) as store:
             self.assertEqual(len(store.list_tasks()), 1)
+
+    def test_blocks_reconciliation_when_quarantined_row_count_exceeds_limit(self) -> None:
+        self.movements.write_text(
+            "event_id,sku,movement_type,quantity\n"
+            "evt-1,SKU-1,sale,2\n"
+            "evt-2,SKU-1,unknown,3\n",
+            encoding="utf-8",
+        )
+
+        exit_code, output, quarantine = self._run_with_quarantine(
+            "--max-quarantined-rows",
+            "0",
+        )
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("quarantined row count 1 exceeds allowed maximum 0", output)
+        self.assertTrue(quarantine.exists())
+        self.assertFalse(self.report.exists())
+
+    def test_blocks_reconciliation_when_quarantined_rate_exceeds_limit(self) -> None:
+        self.movements.write_text(
+            "event_id,sku,movement_type,quantity\n"
+            "evt-1,SKU-1,sale,2\n"
+            "evt-2,SKU-1,unknown,3\n"
+            "evt-3,SKU-1,receipt,1\n",
+            encoding="utf-8",
+        )
+
+        exit_code, output, _ = self._run_with_quarantine(
+            "--max-quarantined-rate",
+            "0.25",
+        )
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("33.33% exceeds allowed maximum 25.00%", output)
+        self.assertFalse(self.report.exists())
+
+    def test_allows_reconciliation_at_exact_quarantine_limits(self) -> None:
+        self.movements.write_text(
+            "event_id,sku,movement_type,quantity\n"
+            "evt-1,SKU-1,sale,2\n"
+            "evt-2,SKU-1,unknown,3\n",
+            encoding="utf-8",
+        )
+
+        exit_code, output, quarantine = self._run_with_quarantine(
+            "--max-quarantined-rows",
+            "1",
+            "--max-quarantined-rate",
+            "0.5",
+        )
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("Quarantine: 1 rows", output)
+        self.assertTrue(quarantine.exists())
+        self.assertTrue(self.report.exists())
+
+    def test_rejects_quality_limits_without_quarantine_output(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = main(
+                [
+                    "--opening",
+                    str(self.opening),
+                    "--movements",
+                    str(self.movements),
+                    "--max-quarantined-rows",
+                    "0",
+                ]
+            )
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("require --movement-quarantine-output", output.getvalue())
 
 
 if __name__ == "__main__":
