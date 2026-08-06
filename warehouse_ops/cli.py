@@ -20,6 +20,20 @@ from .service import sync_reconciliation_tasks
 from .task_store import SQLiteTaskStore
 
 
+def _non_negative_int(raw: str) -> int:
+    value = int(raw)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be zero or greater")
+    return value
+
+
+def _rate(raw: str) -> float:
+    value = float(raw)
+    if not 0 <= value <= 1:
+        raise argparse.ArgumentTypeError("must be between 0 and 1")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="warehouse-reconcile",
@@ -53,6 +67,22 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--max-quarantined-rows",
+        type=_non_negative_int,
+        help=(
+            "Abort with exit code 2 when quarantined movement rows exceed this count. "
+            "Requires --movement-quarantine-output."
+        ),
+    )
+    parser.add_argument(
+        "--max-quarantined-rate",
+        type=_rate,
+        help=(
+            "Abort with exit code 2 when the quarantined share exceeds this 0-1 rate. "
+            "Requires --movement-quarantine-output."
+        ),
+    )
+    parser.add_argument(
         "--task-database",
         help=(
             "Optional SQLite database path. When provided, reconciliation and "
@@ -69,11 +99,44 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _quarantine_gate_error(
+    *,
+    valid_count: int,
+    quarantined_count: int,
+    max_rows: int | None,
+    max_rate: float | None,
+) -> str | None:
+    if max_rows is not None and quarantined_count > max_rows:
+        return (
+            f"quarantined row count {quarantined_count} exceeds allowed maximum "
+            f"{max_rows}"
+        )
+
+    total_count = valid_count + quarantined_count
+    quarantine_rate = quarantined_count / total_count if total_count else 0.0
+    if max_rate is not None and quarantine_rate > max_rate:
+        return (
+            f"quarantined row rate {quarantine_rate:.2%} exceeds allowed maximum "
+            f"{max_rate:.2%}"
+        )
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.routing_config and not args.task_database:
         print("Import failed: --routing-config requires --task-database.")
+        return 2
+
+    quality_gate_requested = (
+        args.max_quarantined_rows is not None or args.max_quarantined_rate is not None
+    )
+    if quality_gate_requested and not args.movement_quarantine_output:
+        print(
+            "Import failed: quarantine quality limits require "
+            "--movement-quarantine-output."
+        )
         return 2
 
     try:
@@ -90,6 +153,19 @@ def main(argv: list[str] | None = None) -> int:
             movements = movement_import.movements
             quarantined_rows = movement_import.quarantined_rows
             write_movement_quarantine_csv(quarantined_rows, args.movement_quarantine_output)
+
+            gate_error = _quarantine_gate_error(
+                valid_count=len(movements),
+                quarantined_count=len(quarantined_rows),
+                max_rows=args.max_quarantined_rows,
+                max_rate=args.max_quarantined_rate,
+            )
+            if gate_error:
+                print(
+                    f"Import blocked by quarantine quality gate: {gate_error}. "
+                    f"Quarantine: {Path(args.movement_quarantine_output)}."
+                )
+                return 2
         else:
             movements = read_movements_csv(args.movements)
         counted_stock = read_stock_csv(args.counted) if args.counted else None
