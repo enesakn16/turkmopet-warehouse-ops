@@ -158,6 +158,67 @@ class ReconciliationCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 2)
         self.assertIn("require --movement-quarantine-output", output.getvalue())
 
+    def test_quality_profile_blocks_reconciliation_with_reusable_limits(self) -> None:
+        self.movements.write_text(
+            "event_id,sku,movement_type,quantity\n"
+            "evt-1,SKU-1,sale,2\n"
+            "evt-2,SKU-1,unknown,3\n",
+            encoding="utf-8",
+        )
+        profile = self._write(
+            "quality-profile.json",
+            '{"max_quarantined_rows": 0, "max_quarantined_rate": 0.5}\n',
+        )
+
+        exit_code, output, quarantine = self._run_with_quarantine(
+            "--quality-profile",
+            str(profile),
+        )
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("quarantined row count 1 exceeds allowed maximum 0", output)
+        self.assertTrue(quarantine.exists())
+        self.assertFalse(self.report.exists())
+
+    def test_explicit_cli_limit_overrides_matching_profile_value(self) -> None:
+        self.movements.write_text(
+            "event_id,sku,movement_type,quantity\n"
+            "evt-1,SKU-1,sale,2\n"
+            "evt-2,SKU-1,unknown,3\n",
+            encoding="utf-8",
+        )
+        profile = self._write(
+            "quality-profile.json",
+            '{"max_quarantined_rows": 0, "max_quarantined_rate": 0.5}\n',
+        )
+
+        exit_code, output, quarantine = self._run_with_quarantine(
+            "--quality-profile",
+            str(profile),
+            "--max-quarantined-rows",
+            "1",
+        )
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("Quarantine: 1 rows", output)
+        self.assertTrue(quarantine.exists())
+        self.assertTrue(self.report.exists())
+
+    def test_rejects_invalid_quality_profile_before_import(self) -> None:
+        profile = self._write(
+            "quality-profile.json",
+            '{"max_quarantined_rate": 1.5}\n',
+        )
+
+        exit_code, output, _ = self._run_with_quarantine(
+            "--quality-profile",
+            str(profile),
+        )
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("max_quarantined_rate must be between 0 and 1", output)
+        self.assertFalse(self.report.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
