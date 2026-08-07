@@ -13,6 +13,7 @@ from .io import (
     write_movement_quarantine_csv,
     write_report_json,
 )
+from .quality_profile import QualityProfile, QualityProfileError
 from .quarantine import quarantine_rows_to_issues
 from .reconciliation import ReconciliationReport, reconcile_stock
 from .routing import RoutingConfigError, RoutingRules
@@ -64,6 +65,13 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Optional CSV path for invalid movement rows. When provided, valid rows "
             "continue to reconciliation while invalid rows are excluded and recorded."
+        ),
+    )
+    parser.add_argument(
+        "--quality-profile",
+        help=(
+            "Optional JSON file with reusable quarantine limits. Explicit CLI limits "
+            "override matching profile values. Requires --movement-quarantine-output."
         ),
     )
     parser.add_argument(
@@ -129,8 +137,28 @@ def main(argv: list[str] | None = None) -> int:
         print("Import failed: --routing-config requires --task-database.")
         return 2
 
+    try:
+        quality_profile = (
+            QualityProfile.from_json(args.quality_profile)
+            if args.quality_profile
+            else QualityProfile()
+        )
+    except QualityProfileError as exc:
+        print(f"Import failed: {exc}")
+        return 2
+
+    max_quarantined_rows = (
+        args.max_quarantined_rows
+        if args.max_quarantined_rows is not None
+        else quality_profile.max_quarantined_rows
+    )
+    max_quarantined_rate = (
+        args.max_quarantined_rate
+        if args.max_quarantined_rate is not None
+        else quality_profile.max_quarantined_rate
+    )
     quality_gate_requested = (
-        args.max_quarantined_rows is not None or args.max_quarantined_rate is not None
+        max_quarantined_rows is not None or max_quarantined_rate is not None
     )
     if quality_gate_requested and not args.movement_quarantine_output:
         print(
@@ -157,8 +185,8 @@ def main(argv: list[str] | None = None) -> int:
             gate_error = _quarantine_gate_error(
                 valid_count=len(movements),
                 quarantined_count=len(quarantined_rows),
-                max_rows=args.max_quarantined_rows,
-                max_rate=args.max_quarantined_rate,
+                max_rows=max_quarantined_rows,
+                max_rate=max_quarantined_rate,
             )
             if gate_error:
                 print(
