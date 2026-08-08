@@ -61,6 +61,27 @@ Profil güvenliği:
 - Profilde en az bir eşik tanımlanmalıdır.
 - Profil okunamaz veya geçersizse veri içe aktarımı başlamadan komut `2` ile durur.
 
+## Denetim izi
+
+Karantina açıkken başarılı biçimde üretilen mutabakat JSON'una o çalışmada gerçekten uygulanan politika da yazılır. Böylece daha sonra raporun hangi eşiklerle üretildiği geriye dönük doğrulanabilir.
+
+Örnek:
+
+```json
+{
+  "quarantine_quality_gate": {
+    "profile": "production-quality.json",
+    "max_quarantined_rows": 2,
+    "max_quarantined_rate": 0.02,
+    "valid_movement_rows": 980,
+    "quarantined_movement_rows": 4,
+    "quarantined_rate": 0.004065
+  }
+}
+```
+
+Buradaki eşikler profil dosyasındaki ham değerler değil, CLI override'ları uygulandıktan sonraki **efektif değerlerdir**. Profil alanında yalnızca dosya adı saklanır; yerel makinenin tam dosya yolu rapora sızdırılmaz.
+
 ## Güvenli davranış
 
 - Eşik aşılırsa karantina CSV'si yine yazılır; hatalı satırlar incelenebilir.
@@ -69,5 +90,6 @@ Profil güvenliği:
 - Oran değeri `0` ile `1` arasında olmalıdır.
 - Sınırın tam üzerindeki değer kabul edilir; yalnızca sınır aşıldığında işlem durur.
 - CLI eşikleri veya kalite profili `--movement-quarantine-output` olmadan kullanılamaz.
+- Başarılı rapor, uygulanan kalite politikasını ve gerçek karantina oranını kendi içinde taşır.
 
 Önerilen üretim başlangıcı: en fazla 5 satır ve en fazla %2 karantina. Gerçek hata dağılımı ölçüldükten sonra limitler daha da sıkılaştırılmalıdır.
