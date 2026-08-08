@@ -250,6 +250,19 @@ class ReconciliationCliTests(unittest.TestCase):
         self.assertIn("max_quarantined_rate must be between 0 and 1", output)
         self.assertFalse(self.report.exists())
 
+    def test_rejects_non_utf8_quality_profile_without_traceback(self) -> None:
+        profile = self.root / "quality-profile.json"
+        profile.write_bytes(b'{"max_quarantined_rows": \xff}\n')
+
+        exit_code, output, _ = self._run_with_quarantine(
+            "--quality-profile",
+            str(profile),
+        )
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("quality profile must be valid UTF-8", output)
+        self.assertFalse(self.report.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
