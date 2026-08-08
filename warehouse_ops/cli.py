@@ -130,6 +130,26 @@ def _quarantine_gate_error(
     return None
 
 
+def _quality_gate_audit(
+    *,
+    profile_path: str | None,
+    valid_count: int,
+    quarantined_count: int,
+    max_rows: int | None,
+    max_rate: float | None,
+) -> dict[str, object]:
+    total_count = valid_count + quarantined_count
+    quarantine_rate = quarantined_count / total_count if total_count else 0.0
+    return {
+        "profile": Path(profile_path).name if profile_path else None,
+        "max_quarantined_rows": max_rows,
+        "max_quarantined_rate": max_rate,
+        "valid_movement_rows": valid_count,
+        "quarantined_movement_rows": quarantined_count,
+        "quarantined_rate": round(quarantine_rate, 6),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -210,7 +230,21 @@ def main(argv: list[str] | None = None) -> int:
             issues=report.issues + quarantine_issues,
         )
 
-    output_path = write_report_json(report, args.output)
+    quality_gate_audit = None
+    if args.movement_quarantine_output:
+        quality_gate_audit = _quality_gate_audit(
+            profile_path=args.quality_profile,
+            valid_count=len(movements),
+            quarantined_count=len(quarantined_rows),
+            max_rows=max_quarantined_rows,
+            max_rate=max_quarantined_rate,
+        )
+
+    output_path = write_report_json(
+        report,
+        args.output,
+        quality_gate=quality_gate_audit,
+    )
 
     if args.issues_output:
         write_issues_csv(report.prioritized_issues, args.issues_output)
