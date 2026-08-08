@@ -54,6 +54,7 @@ Komut satırında açıkça verilen bir eşik, yalnızca aynı profil alanını 
 
 Profil güvenliği:
 
+- Profil dosyası geçerli UTF-8 olmalıdır; farklı/bozuk kodlama kontrollü olarak reddedilir ve traceback ile otomasyonu düşürmez.
 - Kök değer JSON nesnesi olmalıdır.
 - Yalnızca `max_quarantined_rows` ve `max_quarantined_rate` alanları kabul edilir; yazım hatası olabilecek bilinmeyen alanlar reddedilir.
 - Satır sınırı sıfır veya pozitif tam sayı olmalıdır.
@@ -90,6 +91,7 @@ Buradaki eşikler profil dosyasındaki ham değerler değil, CLI override'ları 
 - Oran değeri `0` ile `1` arasında olmalıdır.
 - Sınırın tam üzerindeki değer kabul edilir; yalnızca sınır aşıldığında işlem durur.
 - CLI eşikleri veya kalite profili `--movement-quarantine-output` olmadan kullanılamaz.
+- Geçersiz UTF-8 kalite profili kontrollü `Import failed` mesajı ve çıkış kodu `2` ile reddedilir.
 - Başarılı rapor, uygulanan kalite politikasını ve gerçek karantina oranını kendi içinde taşır.
 
 Önerilen üretim başlangıcı: en fazla 5 satır ve en fazla %2 karantina. Gerçek hata dağılımı ölçüldükten sonra limitler daha da sıkılaştırılmalıdır.
