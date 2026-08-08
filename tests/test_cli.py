@@ -1,4 +1,5 @@
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -203,6 +204,36 @@ class ReconciliationCliTests(unittest.TestCase):
         self.assertIn("Quarantine: 1 rows", output)
         self.assertTrue(quarantine.exists())
         self.assertTrue(self.report.exists())
+
+    def test_report_records_applied_quality_profile_and_effective_limits(self) -> None:
+        self.movements.write_text(
+            "event_id,sku,movement_type,quantity\n"
+            "evt-1,SKU-1,sale,2\n"
+            "evt-2,SKU-1,unknown,3\n"
+            "evt-3,SKU-1,receipt,1\n",
+            encoding="utf-8",
+        )
+        profile = self._write(
+            "production-quality.json",
+            '{"max_quarantined_rows": 5, "max_quarantined_rate": 0.5}\n',
+        )
+
+        exit_code, _, _ = self._run_with_quarantine(
+            "--quality-profile",
+            str(profile),
+            "--max-quarantined-rows",
+            "2",
+        )
+
+        self.assertEqual(exit_code, 1)
+        payload = json.loads(self.report.read_text(encoding="utf-8"))
+        audit = payload["quarantine_quality_gate"]
+        self.assertEqual(audit["profile"], "production-quality.json")
+        self.assertEqual(audit["max_quarantined_rows"], 2)
+        self.assertEqual(audit["max_quarantined_rate"], 0.5)
+        self.assertEqual(audit["valid_movement_rows"], 2)
+        self.assertEqual(audit["quarantined_movement_rows"], 1)
+        self.assertAlmostEqual(audit["quarantined_rate"], 1 / 3, places=6)
 
     def test_rejects_invalid_quality_profile_before_import(self) -> None:
         profile = self._write(
