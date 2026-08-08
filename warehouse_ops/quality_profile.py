@@ -19,11 +19,18 @@ class QualityProfile:
     def from_json(cls, path: str | Path) -> "QualityProfile":
         profile_path = Path(path)
         try:
-            raw = json.loads(profile_path.read_text(encoding="utf-8"))
+            profile_text = profile_path.read_text(encoding="utf-8")
         except OSError as exc:
             raise QualityProfileError(
                 f"cannot read quality profile {profile_path}: {exc}"
             ) from exc
+        except UnicodeDecodeError as exc:
+            raise QualityProfileError(
+                f"quality profile must be valid UTF-8: {profile_path}"
+            ) from exc
+
+        try:
+            raw = json.loads(profile_text)
         except json.JSONDecodeError as exc:
             raise QualityProfileError(
                 f"invalid JSON in quality profile {profile_path}: line {exc.lineno}, column {exc.colno}"
