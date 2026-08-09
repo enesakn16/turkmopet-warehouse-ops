@@ -58,7 +58,7 @@ Profil güvenliği:
 - Kök değer JSON nesnesi olmalıdır.
 - Yalnızca `max_quarantined_rows` ve `max_quarantined_rate` alanları kabul edilir; yazım hatası olabilecek bilinmeyen alanlar reddedilir.
 - Satır sınırı sıfır veya pozitif tam sayı olmalıdır.
-- Oran `0` ile `1` arasında sayısal değer olmalıdır.
+- Oran `0` ile `1` arasında sonlu bir sayısal değer olmalıdır; `NaN`, `Infinity` ve `-Infinity` reddedilir.
 - Profilde en az bir eşik tanımlanmalıdır.
 - Profil okunamaz veya geçersizse veri içe aktarımı başlamadan komut `2` ile durur.
 
@@ -88,7 +88,7 @@ Buradaki eşikler profil dosyasındaki ham değerler değil, CLI override'ları 
 - Eşik aşılırsa karantina CSV'si yine yazılır; hatalı satırlar incelenebilir.
 - Mutabakat JSON'u, sorun CSV'si ve görev senkronizasyonu oluşturulmaz.
 - Eşik değeri satır sayısı için sıfır veya pozitif tam sayı olmalıdır.
-- Oran değeri `0` ile `1` arasında olmalıdır.
+- Oran değeri `0` ile `1` arasında sonlu olmalıdır; özel kayan nokta değerleri (`NaN`, `Infinity`, `-Infinity`) kalite kapısını devre dışı bırakamaz.
 - Sınırın tam üzerindeki değer kabul edilir; yalnızca sınır aşıldığında işlem durur.
 - CLI eşikleri veya kalite profili `--movement-quarantine-output` olmadan kullanılamaz.
 - Geçersiz UTF-8 kalite profili kontrollü `Import failed` mesajı ve çıkış kodu `2` ile reddedilir.
