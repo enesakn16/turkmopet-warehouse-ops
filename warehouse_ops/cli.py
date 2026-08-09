@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 
 from .io import (
@@ -30,8 +31,8 @@ def _non_negative_int(raw: str) -> int:
 
 def _rate(raw: str) -> float:
     value = float(raw)
-    if not 0 <= value <= 1:
-        raise argparse.ArgumentTypeError("must be between 0 and 1")
+    if not math.isfinite(value) or not 0 <= value <= 1:
+        raise argparse.ArgumentTypeError("must be a finite number between 0 and 1")
     return value
 
 
