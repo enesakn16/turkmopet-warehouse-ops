@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,6 @@ def _optional_rate(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise QualityProfileError("max_quarantined_rate must be a number between 0 and 1")
     rate = float(value)
-    if not 0 <= rate <= 1:
-        raise QualityProfileError("max_quarantined_rate must be between 0 and 1")
+    if not math.isfinite(rate) or not 0 <= rate <= 1:
+        raise QualityProfileError("max_quarantined_rate must be a finite number between 0 and 1")
     return rate
