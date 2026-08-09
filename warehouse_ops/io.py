@@ -222,10 +222,14 @@ def write_movement_quarantine_csv(
     return output_path
 
 
-def report_to_dict(report: ReconciliationReport) -> dict[str, object]:
+def report_to_dict(
+    report: ReconciliationReport,
+    *,
+    quality_gate: dict[str, object] | None = None,
+) -> dict[str, object]:
     """Convert a reconciliation report to a stable JSON-compatible payload."""
 
-    return {
+    payload: dict[str, object] = {
         "is_balanced": report.is_balanced,
         "summary": {
             "line_count": len(report.lines),
@@ -234,6 +238,9 @@ def report_to_dict(report: ReconciliationReport) -> dict[str, object]:
         "lines": [asdict(line) for line in report.lines],
         "issues": [asdict(issue) for issue in report.prioritized_issues],
     }
+    if quality_gate is not None:
+        payload["quarantine_quality_gate"] = quality_gate
+    return payload
 
 
 def write_report_json(
@@ -241,13 +248,19 @@ def write_report_json(
     path: str | Path,
     *,
     indent: int = 2,
+    quality_gate: dict[str, object] | None = None,
 ) -> Path:
     """Write a reconciliation report as UTF-8 JSON and return its path."""
 
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
-        json.dumps(report_to_dict(report), ensure_ascii=False, indent=indent) + "\n",
+        json.dumps(
+            report_to_dict(report, quality_gate=quality_gate),
+            ensure_ascii=False,
+            indent=indent,
+        )
+        + "\n",
         encoding="utf-8",
     )
     return output_path
