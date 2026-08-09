@@ -26,7 +26,7 @@ class QuarantineRateValidationTests(unittest.TestCase):
                     )
                     with self.assertRaisesRegex(
                         QualityProfileError,
-                        "finite number between 0 and 1",
+                        "between 0 and 1.*finite",
                     ):
                         QualityProfile.from_json(profile)
 
