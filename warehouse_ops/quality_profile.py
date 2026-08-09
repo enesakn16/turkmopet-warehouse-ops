@@ -75,5 +75,5 @@ def _optional_rate(value: Any) -> float | None:
         raise QualityProfileError("max_quarantined_rate must be a number between 0 and 1")
     rate = float(value)
     if not math.isfinite(rate) or not 0 <= rate <= 1:
-        raise QualityProfileError("max_quarantined_rate must be a finite number between 0 and 1")
+        raise QualityProfileError("max_quarantined_rate must be between 0 and 1 and finite")
     return rate
